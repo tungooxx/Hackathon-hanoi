@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
 import {
   createChatSession,
+  createGuestChatSession,
   formatVnd,
   streamChat,
   streamGuestChat,
@@ -179,13 +180,14 @@ export default function ChatBubble() {
     inputRef.current?.focus()
 
     try {
-      // Authenticated users receive a durable, owner-checked conversation.
-      // Guests skip session creation and use the stateless endpoint below.
+      // Cả user thật lẫn khách đều mở một phiên có thread_id + session_content
+      // để agent giữ được ngữ cảnh hội thoại. Khác biệt duy nhất: user thật lưu
+      // theo tài khoản, khách chỉ giữ trong phiên hiện tại (id sống trong ref).
       if (!chatSessionId.current) {
-        if (user) {
-          const created = await createChatSession()
-          chatSessionId.current = created.id
-        }
+        const created = user
+          ? await createChatSession()
+          : await createGuestChatSession()
+        chatSessionId.current = created.id
       }
     } catch (error) {
       patchBot(botId, {
@@ -234,7 +236,10 @@ export default function ChatBubble() {
         chatSessionId: chatSessionId.current,
       })
     } else {
-      streamGuestChat(request)
+      streamGuestChat({
+        ...request,
+        chatSessionId: chatSessionId.current,
+      })
     }
   }
 
@@ -287,7 +292,7 @@ export default function ChatBubble() {
               <strong>Trợ lý AI Điện máy XANH</strong>
               <span className="chat-panel__status">
                 <i className="dot" />{' '}
-                {user ? 'Lưu theo tài khoản' : 'Khách · Không lưu lịch sử'}
+                {user ? 'Lưu theo tài khoản' : 'Khách · Lịch sử tạm thời'}
               </span>
             </div>
             <button className="chat-panel__close" onClick={() => setOpen(false)}>
