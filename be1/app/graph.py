@@ -215,10 +215,27 @@ async def intent_node(state: AgentState) -> dict:
                 "ontology_answers": {**result.ontology_answers, expected_slot: state["user_input"]},
             })
 
+    price_fields = {"price_sale", "price_original"}
+    if expected_definition and expected_definition.name in result.ontology_answers \
+            and expected_definition.maps_to_field in price_fields:
+        answers = dict(result.ontology_answers)
+        has_budget = any(
+            getattr(result, key) is not None
+            for key in ("budget_min", "budget_max", "budget_target")
+        )
+        if has_budget or result.active_answer_skip:
+            answers[expected_definition.name] = ontology._SKIP_ANSWER
+        else:
+            answers.pop(expected_definition.name, None)
+            if asked and asked[-1] == expected_definition.name:
+                asked.pop()
+        result = result.model_copy(update={"ontology_answers": answers, "intent_type": "same_topic"})
+
     # Do not let a vague reply become a fake filter.  The active schema and
     # current catalog decide whether the answer is executable; the LLM only
     # supplies language understanding.
-    if expected_definition and expected_definition.name in result.ontology_answers:
+    if (expected_definition and expected_definition.name in result.ontology_answers
+            and expected_definition.maps_to_field not in price_fields):
         # Preserve operators and qualifiers from the customer's actual words
         # ("trở lên", "dưới", "khoảng"), which a semantic LLM may omit when
         # returning a normalized answer label. Price is the exception because

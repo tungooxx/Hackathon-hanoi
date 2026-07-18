@@ -116,7 +116,14 @@ def choose_next_question(
             continue
         changes: list[float] = []
         for answer in answers:
-            simulated_slots = {**slots, slot: answer}
+            # Live price answers are executed through LLM-owned budget slots,
+            # not by parsing a raw answer in the runtime question slot. Use
+            # the same representation here or price would falsely score zero.
+            simulated_slots = (
+                {**slots, "budget_max": answer}
+                if definition.maps_to_field in {"price_sale", "price_original"}
+                else {**slots, slot: answer}
+            )
             simulated_products = apply_hard_filters(products, simulated_slots)
             # Use exactly the same typed normalizer/filter executor as the
             # live conversation.  Otherwise Decision-Gap would score a
