@@ -18,6 +18,14 @@ LLM_MODEL_LARGE = os.getenv("LLM_MODEL_LARGE", "llama-3.3-70b-versatile")
 # rỗng -> dùng fixture local thay vì gọi BE2 của Kiên
 BE2_BASE_URL = os.getenv("BE2_BASE_URL", "")
 
+ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+ELASTICSEARCH_INDEX = os.getenv("ELASTICSEARCH_PRODUCTS_INDEX", "products")
+ELASTICSEARCH_USERNAME = os.getenv("ELASTICSEARCH_USERNAME", "")
+ELASTICSEARCH_PASSWORD = os.getenv("ELASTICSEARCH_PASSWORD", "")
+ELASTICSEARCH_TIMEOUT_SECONDS = float(
+    os.getenv("ELASTICSEARCH_TIMEOUT_SECONDS", "10")
+)
+
 MAX_ASK_TURNS = int(os.getenv("MAX_ASK_TURNS", "3"))
 COMPARE_THRESHOLD = int(os.getenv("COMPARE_THRESHOLD", "3"))
 

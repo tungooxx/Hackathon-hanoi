@@ -1,15 +1,29 @@
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
+
+from db import elasticsearch
 
 from .graph import graph
 from .schemas import ChatRequest
 from .tracing import set_session
 from .turnlog import log_turn
 
-app = FastAPI(title="DMX Advisor BE1")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    await elasticsearch.start()
+    try:
+        yield
+    finally:
+        await elasticsearch.close()
+
+
+app = FastAPI(title="DMX Advisor BE1", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
