@@ -26,3 +26,6 @@ dist-ssr
 # Environment variables
 .env
 deploy/.env.prod
+
+# TLS certs (generated on the server, persist across deploys)
+deploy/certs/

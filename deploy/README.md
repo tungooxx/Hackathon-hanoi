@@ -40,8 +40,18 @@ chmod 600 be1/.env deploy/.env.prod
 bash deploy/deploy.sh main
 ```
 
-The SPA is then served on `http://<server-ip>/` and proxies `/auth`, `/chat`,
-`/catalog`, `/health` to the backend.
+The SPA is then served on `https://<server-ip>/` and proxies `/auth`, `/chat`,
+`/catalog`, `/health` to the backend. Plain HTTP on `:80` redirects to HTTPS.
+
+TLS uses a **self-signed cert** (bare IP, no domain), generated automatically by
+`deploy.sh` into `deploy/certs/` on first run (gitignored, persists). Browsers
+show a one-time "Not secure" warning you must accept. Because TLS is now in
+front, `be1/.env` must use `APP_ENV=production`, `AUTH_COOKIE_SECURE=1`, and
+`FRONTEND_ORIGINS=https://<server-ip>`.
+
+Open both ports on the server: `sudo iptables -I INPUT -p tcp --dport 443 -j
+ACCEPT` (443 like the existing 80 rule) **and** add an ingress rule for 443 in
+the Oracle Cloud security list (console).
 
 ## Continuous deployment (server-side, no repo admin needed)
 
