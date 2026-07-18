@@ -171,8 +171,14 @@ def _cached_profile(category: str, products: list[dict], *, require_fingerprint:
         logger.warning("Rejected runtime profile cache for %r: %s", category, error)
         return None
     if cached_errors or len(cached_valid) != len(cached_profile.questions):
-        logger.warning("Rejected runtime profile cache for %r: %s", category, cached_errors)
-        return None
+        if require_fingerprint or not cached_valid:
+            logger.warning("Rejected runtime profile cache for %r: %s", category, cached_errors)
+            return None
+        # A stale snapshot may contain one mapping whose raw values vanished
+        # after a catalog update.  Keep the independently validated questions
+        # instead of demoting the entire category to budget-only fallback.
+        logger.info("Reused %d compatible runtime questions for %r; dropped: %s",
+                    len(cached_valid), category, cached_errors)
     return cached_profile.model_copy(update={"questions": cached_valid})
 
 
