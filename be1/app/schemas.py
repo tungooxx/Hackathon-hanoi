@@ -9,10 +9,12 @@ Category = Literal["may_lanh", "tu_lanh", "may_giat", "khac"]
 class IntentResult(BaseModel):
     """Output của LLM call #1 — gộp intent + slot extraction + routing."""
 
-    intent_type: Literal["new_topic", "same_topic", "off_topic", "force_answer"] = Field(
+    intent_type: Literal["new_topic", "same_topic", "off_topic", "force_answer", "policy"] = Field(
         description="new_topic: hỏi category mới; same_topic: bổ sung thông tin; "
         "off_topic: không liên quan mua sắm điện máy; "
-        "force_answer: khách muốn được tư vấn/chốt ngay không trả lời thêm"
+        "force_answer: khách muốn được tư vấn/chốt ngay không trả lời thêm; "
+        "policy: hỏi về chính sách/quy định cửa hàng (bảo hành, đổi trả, hoàn tiền, "
+        "giao hàng, lắp đặt, khui hộp, điều khoản, dữ liệu cá nhân, nội quy)"
     )
     category: Optional[Category] = None
     budget_max: Optional[float] = Field(None, description="Ngân sách tối đa, đơn vị VND")

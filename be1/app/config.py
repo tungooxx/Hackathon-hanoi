@@ -21,6 +21,17 @@ BE2_BASE_URL = os.getenv("BE2_BASE_URL", "")
 MAX_ASK_TURNS = int(os.getenv("MAX_ASK_TURNS", "3"))
 COMPARE_THRESHOLD = int(os.getenv("COMPARE_THRESHOLD", "3"))
 
+# --- RAG chính sách: embedding OpenAI-compatible, mặc định dùng lại LLM_* ---
+# EMBED_MODEL rỗng (hoặc MOCK_LLM=1) -> fallback lexical, chạy offline không cần key.
+EMBED_BASE_URL = os.getenv("EMBED_BASE_URL", "") or LLM_BASE_URL
+EMBED_API_KEY = os.getenv("EMBED_API_KEY", "") or LLM_API_KEY
+EMBED_MODEL = os.getenv("EMBED_MODEL", "")
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", "4"))
+RAG_MIN_SCORE = float(os.getenv("RAG_MIN_SCORE", "0.3"))
+
+POLICY_DIR = ROOT / "policy-files"
+POLICY_INDEX = ROOT / "logs" / "policy_index.json"
+
 TURN_LOG = ROOT / "logs" / "turns.jsonl"
 JUDGMENT_LOG = ROOT / "logs" / "judgments.jsonl"
 

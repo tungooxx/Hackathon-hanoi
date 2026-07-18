@@ -1,7 +1,7 @@
 # BE1 — DMX AI Advisor (core xử lý)
 
-Flow: `intent → retrieve → [hỏi ngược | so sánh top 3] | off-topic`, tối đa **2 lượt LLM/turn**
-(NLU structured + phrasing streaming), filter/ranking hoàn toàn deterministic.
+Flow: `intent → retrieve → [hỏi ngược | so sánh top 3] | RAG chính sách | off-topic`, tối đa
+**2 lượt LLM/turn** (NLU structured + phrasing streaming), filter/ranking hoàn toàn deterministic.
 
 ## Chạy
 
@@ -25,7 +25,8 @@ Cắm LLM thật: sửa `.env` → `MOCK_LLM=0` + `LLM_API_KEY` (OpenAI-compatib
 | `question` | `{slot, reason}` | đánh dấu turn hỏi ngược + lý do hỏi |
 | `text_chunk` | `{content}` | text bot, append dần |
 | `product_cards` | `{products: [...]}` | render 3 card sản phẩm |
-| `done` | `{turn_type: ask\|compare\|no_match\|off_topic}` | kết thúc turn |
+| `policy_sources` | `{sources: [{title, source, score}]}` | citation cho câu trả lời chính sách (RAG) |
+| `done` | `{turn_type: ask\|compare\|no_match\|policy\|off_topic}` | kết thúc turn |
 
 State hội thoại persist theo `session_id` (LangGraph checkpointer) — FE chỉ cần giữ 1 session_id.
 
@@ -36,6 +37,26 @@ State hội thoại persist theo `session_id` (LangGraph checkpointer) — FE ch
   `energy_stars` int, field thiếu = `null` — **đừng** trả chuỗi "313 lít").
 - Chưa có BE2: để `BE2_BASE_URL` rỗng → BE1 tự đọc `fixtures/`.
 - Fixture sinh từ excel gốc: `python scripts/make_fixture.py` (chỉ ~10 dòng máy lạnh có giá trong data mẫu).
+
+## RAG chính sách (`app/rag.py`)
+
+Câu hỏi về chính sách (bảo hành, đổi trả, giao hàng, khui hộp, điều khoản, dữ liệu cá nhân, nội quy)
+→ intent `policy` → `policy_node`: tìm top-k chunk từ `policy-files/*.md`, trả lời **grounded chỉ
+trong trích dẫn** (prompt `POLICY_SYSTEM`), kèm `policy_sources` để FE hiển thị nguồn. Điểm retrieval
+tốt nhất < `RAG_MIN_SCORE` → bot thú nhận "chưa có thông tin" thay vì bịa.
+
+- **Chunking**: gộp đoạn liền nhau tới ~800 ký tự, overlap 1 đoạn, gắn tên chính sách vào đầu chunk.
+- **Retrieval**: embedding OpenAI-compatible (cùng `base_url` với LLM — set `EMBED_MODEL` là tên
+  model FPT AI Factory). Cache ở `logs/policy_index.json` (hash theo file + model, đổi là tự build lại).
+- **Fallback**: `MOCK_LLM=1` hoặc `EMBED_MODEL` rỗng → tìm kiếm lexical (token overlap), chạy offline
+  không cần key — luồng vẫn hoạt động đầy đủ.
+
+```bash
+python scripts/build_policy_index.py    # build/refresh index embedding (cần EMBED_MODEL + network)
+```
+
+Thêm/sửa chính sách: bỏ file `.md` vào `policy-files/` → index tự build lại ở request kế tiếp
+(hash đổi). Đặt tên hiển thị đẹp cho citation trong `_TITLES` của `app/rag.py`.
 
 ## Hợp đồng với ontology (Tùng)
 
