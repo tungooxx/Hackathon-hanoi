@@ -6,7 +6,7 @@ function initialMessages() {
     {
       id: 1,
       from: 'bot',
-      text: 'Xin chào! Em là trợ lý AI của Điện máy XANH. Anh/chị cần tìm sản phẩm gì hôm nay ạ?',
+      segments: ['Xin chào! 👋', 'Em là trợ lý AI của Điện máy XANH, anh/chị cần tìm sản phẩm gì hôm nay ạ?'],
     },
   ]
 }
@@ -88,6 +88,27 @@ export default function ChatBubble() {
     )
   }
 
+  // nối chunk text vào bong bóng cuối; gặp dòng trống ("\n\n") thì tách thành
+  // bong bóng mới, mô phỏng người thật gửi nhiều tin nhắn ngắn liên tiếp
+  const appendBotText = (botId, chunk) => {
+    setMessages((m) =>
+      m.map((msg) => {
+        if (msg.id !== botId) return msg
+        const segments = [...msg.segments]
+        segments[segments.length - 1] += chunk
+        let sepIdx
+        while ((sepIdx = segments[segments.length - 1].indexOf('\n\n')) !== -1) {
+          const last = segments.length - 1
+          const head = segments[last].slice(0, sepIdx)
+          const rest = segments[last].slice(sepIdx + 2).replace(/^\n+/, '')
+          segments[last] = head
+          segments.push(rest)
+        }
+        return { ...msg, segments }
+      }),
+    )
+  }
+
   const send = () => {
     const text = input.trim()
     if (!text || typing) return
@@ -95,8 +116,8 @@ export default function ChatBubble() {
     const botId = Date.now() + 1
     setMessages((m) => [
       ...m,
-      { id: Date.now(), from: 'user', text },
-      { id: botId, from: 'bot', text: '', funnel: null, products: null, reason: null },
+      { id: Date.now(), from: 'user', segments: [text] },
+      { id: botId, from: 'bot', segments: [''], funnel: null, products: null, reason: null },
     ])
     setInput('')
     setTyping(true)
@@ -109,14 +130,14 @@ export default function ChatBubble() {
       handlers: {
         onFunnel: (f) => patchBot(botId, { funnel: f }),
         onQuestion: (q) => patchBot(botId, { reason: q.reason }),
-        onText: (chunk) => patchBot(botId, (msg) => ({ text: msg.text + chunk })),
+        onText: (chunk) => appendBotText(botId, chunk),
         onProducts: (products) => patchBot(botId, { products }),
         onDone: () => setTyping(false),
         onError: () => {
           patchBot(botId, (msg) => ({
-            text:
-              msg.text ||
-              'Dạ hệ thống đang bận, anh/chị thử lại sau giúp em nhé. 🙏',
+            segments: msg.segments.join('')
+              ? msg.segments
+              : ['Dạ hệ thống đang bận, anh/chị thử lại sau giúp em nhé. 🙏'],
           }))
           setTyping(false)
         },
@@ -171,9 +192,11 @@ export default function ChatBubble() {
                   </div>
                 )}
 
-                {(m.text || m.from === 'user') && (
-                  <div className={`chat-bubble chat-bubble--${m.from}`}>{m.text}</div>
-                )}
+                {m.segments.filter(Boolean).map((seg, i) => (
+                  <div key={i} className={`chat-bubble chat-bubble--${m.from}`}>
+                    {seg}
+                  </div>
+                ))}
 
                 {m.products && m.products.length > 0 && (
                   <div className="chat-cards">

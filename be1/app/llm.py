@@ -33,7 +33,10 @@ Quy tắc SẮT (vi phạm = sa thải):
 - Field null/thiếu trong JSON -> nói thẳng "phần này bên em chưa có thông tin", KHÔNG đoán.
 - Không nói "sản phẩm nào cũng tốt" — phải nêu trade-off cụ thể giữa các lựa chọn.
 - Giải thích thông số bằng ngôn ngữ đời thường (38dB ≈ tiếng thì thầm; 5 sao = tiết kiệm điện nhất).
-- Ngắn gọn, tối đa ~180 từ."""
+- Trả lời như đang NHẮN TIN thật với khách, KHÔNG viết thành một đoạn văn dài: chia câu trả lời
+  thành 2-4 tin nhắn ngắn (mỗi tin 1-2 câu, súc tích, giọng tự nhiên như người thật đang gõ), \
+mỗi tin cách nhau ĐÚNG MỘT dòng trống.
+- Tổng cộng tối đa ~120 từ."""
 
 
 def _get_llm(model: str, temperature: float):
@@ -119,12 +122,12 @@ def _mock_phrase(kind: str, context: dict) -> str:
             noise = f", êm {p['noise_db_min']}dB" if p.get("noise_db_min") else ", độ ồn bên em chưa có thông tin"
             stars = f", {p['energy_stars']} sao điện" if p.get("energy_stars") else ""
             lines.append(f"• {p['name']} — {price}{stars}{noise}.")
-        return ("Dạ theo nhu cầu mình chia sẻ, em chốt 3 lựa chọn này ạ:\n"
+        return ("Dạ theo nhu cầu mình chia sẻ, em chốt 3 lựa chọn này ạ:\n\n"
                 + "\n".join(lines)
-                + "\nMẫu đầu cân bằng nhất với ưu tiên của mình; mẫu rẻ hơn tiết kiệm chi phí ban đầu"
+                + "\n\nMẫu đầu cân bằng nhất với ưu tiên của mình; mẫu rẻ hơn tiết kiệm chi phí ban đầu"
                   " nhưng đánh đổi thông số; mẫu cao hơn bền và đầy đủ tiện ích hơn ạ.")
     if kind == "no_match":
-        return ("Dạ với điều kiện hiện tại em chưa tìm được mẫu nào khớp hoàn toàn. "
+        return ("Dạ với điều kiện hiện tại em chưa tìm được mẫu nào khớp hoàn toàn.\n\n"
                 "Anh/chị có thể nới ngân sách hoặc diện tích một chút để em tìm lại giúp mình nhé ạ.")
     return "Dạ em là trợ lý tư vấn điện máy của Điện Máy Xanh, mình cần tư vấn sản phẩm nào em hỗ trợ liền ạ!"
 
