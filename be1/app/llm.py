@@ -228,7 +228,16 @@ async def extract_intent(
     if MOCK_LLM:
         return _mock_intent(text, category, expected_question)
     llm = _get_llm(LLM_MODEL_SMALL, 0.0)
+    budget_interpretation = (
+        "Normalize Vietnamese money expressions, slang, and likely typos to VND. "
+        "Use budget_max for an explicit upper bound, budget_min for an explicit lower bound, "
+        "and budget_target for an approximate or bare intended spend; never invent an amount. "
+        "When the customer states two monetary endpoints as one bounded interval, return both "
+        "budget_min and budget_max in ascending order and leave budget_target empty. "
+        "An explicit interval takes precedence over approximate wording around it."
+    )
     system = INTENT_SYSTEM.format(category=category or "chưa có", slots=json.dumps(slots, ensure_ascii=False))
+    system += "\n" + budget_interpretation
     if known_categories:
         # Nhãn category thật từ Elasticsearch: cho model nhỏ map ngôn ngữ đời thường
         # ("tủ đựng đồ ăn", "air purifier") về đúng nhãn kho thay vì đoán mã tự chế.

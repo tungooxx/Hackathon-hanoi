@@ -119,6 +119,9 @@ AUTH_REFRESH_COOKIE_PATH = "/auth"
 
 MAX_ASK_TURNS = int(os.getenv("MAX_ASK_TURNS", "3"))
 COMPARE_THRESHOLD = int(os.getenv("COMPARE_THRESHOLD", "3"))
+RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS = float(
+    os.getenv("RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS", "20")
+)
 
 # --- Web search / enrichment (sản phẩm lạ không có trong catalog) ---
 # MOCK_LLM=1 hoặc thiếu TAVILY_API_KEY -> dùng fixture offline, luồng vẫn chạy.
@@ -177,6 +180,7 @@ def validate_auth_config() -> None:
         "JWT_REFRESH_TTL_SECONDS": JWT_REFRESH_TTL_SECONDS,
         "LANGGRAPH_POOL_MIN_SIZE": LANGGRAPH_POOL_MIN_SIZE,
         "LANGGRAPH_POOL_MAX_SIZE": LANGGRAPH_POOL_MAX_SIZE,
+        "RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS": RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS,
     }
     invalid = [name for name, value in positive_values.items() if value <= 0]
     if invalid:

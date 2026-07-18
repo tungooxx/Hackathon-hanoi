@@ -6,7 +6,9 @@ Vietnamese question bank in ``data/ontology_data.json``.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 import unicodedata
 from hashlib import sha256
@@ -18,6 +20,7 @@ from .schemas import NextQuestion, SlotDef
 
 
 ONTOLOGY_PATH = Path(__file__).resolve().parents[2] / "data" / "ontology_data.json"
+logger = logging.getLogger(__name__)
 
 def _normal(value: str) -> str:
     value = unicodedata.normalize("NFD", value.lower())
@@ -121,11 +124,12 @@ async def get_runtime_slot_schema(category: str, products: list[dict[str, Any]])
     A reviewed seed with only a field relationship is not executable by itself:
     it lacks the raw-value map needed to interpret a natural "có/không" reply.
     Do not block a customer turn on an LLM compiler to fill that gap.  For that
-    case, use the deterministic catalog fallback and let Decision-Gap decide
-    whether any candidate is worth asking. Runtime-profile compilation remains
-    for categories without reviewed seed questions and should be prewarmed.
+    case, compile a profile once from real catalog evidence. The resulting
+    mapping is validated and cached; later turns are cache-only. If compilation
+    is unavailable, retain the deterministic fallback rather than failing chat.
     """
-    from .profile_compiler import get_cached_profile
+    from .config import RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS
+    from .profile_compiler import compile_profile, get_cached_profile
 
     attributes = {key for product in products for key in product.get("attributes", {})}
     standard_fields = {"price_sale", "price_original"}
@@ -134,7 +138,16 @@ async def get_runtime_slot_schema(category: str, products: list[dict[str, Any]])
         return []
     profile = get_cached_profile(category, products)
     if profile is None:
-        return _catalog_fallback_schema(category, products)
+        try:
+            profile = await asyncio.wait_for(
+                compile_profile(category, questions_for_category(category), products),
+                timeout=RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS,
+            )
+        except Exception as error:
+            # A cold cache must not turn an otherwise usable catalog into an
+            # outage. Feature questions require the compiler's validated map.
+            logger.warning("Runtime profile compilation unavailable for %r: %s", category, error)
+            return _catalog_fallback_schema(category, products)
     result: list[SlotDef] = []
     for question in profile.questions:
         if question.field not in available_fields:
