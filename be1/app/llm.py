@@ -17,18 +17,23 @@ Ngữ cảnh hội thoại: category hiện tại = {category}, thông tin đã 
 
 Quy tắc:
 - intent_type: "new_topic" nếu khách chuyển sang loại sản phẩm khác; "same_topic" nếu bổ sung \
-thông tin; "off_topic" nếu không liên quan mua sắm điện máy; "force_answer" nếu khách muốn \
+thông tin hoặc hỏi mẫu vừa được gợi ý; "off_topic" nếu không liên quan mua sắm điện máy; "force_answer" nếu khách muốn \
 được gợi ý/chốt ngay ("tư vấn luôn đi", "cứ gợi ý đi", "sao cũng được"); "policy" nếu khách \
 hỏi về CHÍNH SÁCH/QUY ĐỊNH cửa hàng (bảo hành, đổi trả, hoàn tiền/trả hàng, giao hàng, lắp đặt, \
 khui hộp, điều khoản sử dụng, xử lý dữ liệu cá nhân/bảo mật, nội quy) — kể cả khi có nhắc tên sản phẩm.
 - budget_max đổi về VND: "10tr"/"10 triệu" -> 10000000. "tầm"/"khoảng" vẫn tính là budget_max.
 - product_mentions: chép NGUYÊN VĂN tên/mã sản phẩm khách gõ, không sửa chính tả.
+- Nếu khách nói "loại/mẫu số 1", "máy 1", "mẫu đầu", hoặc yêu cầu thông tin chi tiết về một mẫu
+  trong danh sách vừa gợi ý: đặt selected_index (1-3), wants_product_details=true và intent_type=same_topic.
+- "Bảo hành" của mẫu khách vừa chọn là thông tin sản phẩm, KHÔNG phải policy. Chỉ dùng intent_type=policy
+  khi khách hỏi chính sách chung của cửa hàng, không gắn với mẫu đang chọn.
 - priorities theo thứ tự khách nhắc: tiết kiệm điện->tiet_kiem_dien, êm/ít ồn->it_on, rẻ->gia_re.
 
 Ví dụ:
 "mya lanh cho fong 15m2 tam 8tr" -> category=may_lanh, area_m2=15, budget_max=8000000, intent_type=new_topic
 "thoi co gi tu van luon di" -> intent_type=force_answer
-"may lanh nay bao hanh bao lau" -> intent_type=policy
+"thông tin loại 1 và bảo hành" -> selected_index=1, wants_product_details=true, intent_type=same_topic
+"may lanh nay bao hanh bao lau" -> wants_product_details=true, intent_type=same_topic
 "chinh sach doi tra the nao" -> intent_type=policy
 "hom nay da nang mua khong" -> intent_type=off_topic"""
 
@@ -66,12 +71,6 @@ def _get_llm(model: str, temperature: float):
 
 # ---------------- intent ----------------
 
-_CATEGORY_KW = {
-    "may_lanh": ["máy lạnh", "may lanh", "mya lanh", "điều hòa", "dieu hoa", "máy điều hòa"],
-    "tu_lanh": ["tủ lạnh", "tu lanh"],
-    "may_giat": ["máy giặt", "may giat"],
-}
-
 _POLICY_KW = [
     "bảo hành", "bao hanh", "đổi trả", "doi tra", "hoàn tiền", "hoan tien", "trả hàng", "tra hang",
     "giao hàng", "giao hang", "lắp đặt", "lap dat", "khui hộp", "khui hop", "điều khoản", "dieu khoan",
@@ -82,7 +81,7 @@ _POLICY_KW = [
 
 def _mock_intent(text: str, category: str | None) -> IntentResult:
     low = text.lower()
-    cat = next((c for c, kws in _CATEGORY_KW.items() if any(k in low for k in kws)), None)
+    cat = None  # Category is resolved against real Elasticsearch data in graph.py.
     slots: dict = {}
     if m := re.search(r"(\d+(?:[.,]\d+)?)\s*(?:tr\b|trieu|triệu)", low):
         slots["budget_max"] = float(m.group(1).replace(",", ".")) * 1_000_000
@@ -97,14 +96,24 @@ def _mock_intent(text: str, category: str | None) -> IntentResult:
         prios.append("gia_re")
     force = bool(re.search(r"luôn đi|luon di|chốt|gợi ý (luôn|ngay)|sao cũng được|tu van luon", low))
     is_policy = any(k in low for k in _POLICY_KW)
+    selected_index = None
+    if m := re.search(r"(?:loại|loai|mẫu|mau|máy|may)\s*(?:số\s*)?([1-3])\b", low):
+        selected_index = int(m.group(1))
+    elif re.search(r"mẫu đầu|mau dau|loại đầu|loai dau", low):
+        selected_index = 1
+    wants_details = bool(selected_index or re.search(r"thông tin|thong tin|chi tiết|chi tiet", low))
     if force:
         itype = "force_answer"
-    elif is_policy and not slots:
+    elif wants_details:
+        # A reference to an item in the preceding shortlist is not a general
+        # store-policy request, even if the customer also asks about warranty.
+        itype = "same_topic"
+    elif is_policy and not slots and not wants_details and selected_index is None:
         # hỏi chính sách (không kèm ngân sách/diện tích = không phải đang lọc sản phẩm)
         return IntentResult(intent_type="policy", category=None, priorities=[])
     elif cat and cat != category:
         itype = "new_topic"
-    elif cat or slots or prios:
+    elif slots or prios or re.search(r"mua|cần|can|tìm|tim", low):
         itype = "same_topic"
     else:
         # mock không hiểu ngữ nghĩa: không có tín hiệu nào -> off_topic
@@ -113,14 +122,31 @@ def _mock_intent(text: str, category: str | None) -> IntentResult:
     return IntentResult(
         intent_type=itype, category=cat, priorities=prios,
         budget_max=slots.get("budget_max"), area_m2=slots.get("area_m2"),
+        selected_index=selected_index, wants_product_details=wants_details,
     )
 
 
-async def extract_intent(text: str, category: str | None, slots: dict) -> IntentResult:
+async def extract_intent(
+    text: str,
+    category: str | None,
+    slots: dict,
+    expected_question: dict | None = None,
+) -> IntentResult:
     if MOCK_LLM:
         return _mock_intent(text, category)
     llm = _get_llm(LLM_MODEL_SMALL, 0.0).with_structured_output(IntentResult)
     system = INTENT_SYSTEM.format(category=category or "chưa có", slots=json.dumps(slots, ensure_ascii=False))
+    if expected_question:
+        system += (
+            "\nThe customer is replying to this ontology question: "
+            f"{json.dumps(expected_question, ensure_ascii=False)}. "
+            "Interpret the reply as the answer to that exact question and populate its slot. "
+            "Do not infer values for any other slot."
+        )
+    system += (
+        "\nWhen the customer asks for the most expensive/highest priced option in the current list, "
+        "set price_order='highest'. For cheapest/lowest priced, set price_order='lowest'."
+    )
     return await llm.ainvoke([("system", system), ("user", text)], config=lf_config("intent"))
 
 
@@ -141,7 +167,9 @@ def _mock_phrase(kind: str, context: dict) -> str:
             "area_m2": f"Dạ em đang có {n} mẫu phù hợp. Phòng mình rộng khoảng bao nhiêu mét vuông, có bị nắng chiếu trực tiếp không ạ?",
             "brand": "Anh/chị có ưu tiên hãng nào không ạ, hay để em chọn theo hiệu năng/giá?",
         }
-        return asks.get(slot, f"Anh/chị cho em xin thêm thông tin về {slot} ạ?")
+        # Dynamic ontology concepts must never leak internal slot names to a
+        # customer. Their Vietnamese question label is the fallback wording.
+        return asks.get(slot, f"Dạ để em tư vấn sát hơn: {context['ask_hint']}")
     if kind == "compare":
         lines = []
         for p in context["products"]:
@@ -156,7 +184,19 @@ def _mock_phrase(kind: str, context: dict) -> str:
     if kind == "no_match":
         return ("Dạ với điều kiện hiện tại em chưa tìm được mẫu nào khớp hoàn toàn.\n\n"
                 "Anh/chị có thể nới ngân sách hoặc diện tích một chút để em tìm lại giúp mình nhé ạ.")
-    if kind == "policy":
+    if kind == "detail":
+        product = context["product"]
+        price = f"{product['price_sale']:,.0f}đ".replace(",", ".") if product.get("price_sale") else "bên em chưa có giá"
+        warranty = product.get("warranty_parts") or "phần bảo hành bên em chưa có thông tin"
+        return f"Dạ mẫu anh/chị chọn là {product['name']}, giá hiện tại {price}.\n\nBảo hành: {warranty}."
+    if kind == "price_answer":
+        system = SALER_SYSTEM
+        user_msg = (
+            f"Answer which product is {context['price_order']} priced in the current filtered list. "
+            f"State its name and sale price naturally. Use only this catalog record: "
+            f"{json.dumps(context['product'], ensure_ascii=False)}"
+        )
+    elif kind == "policy":
         top = context["hits"][0]
         snippet = top["text"].split("\n", 1)[-1].strip()[:400]  # bỏ dòng header [title]
         return (f"Dạ theo {top['title']} của bên em:\n\n"
@@ -169,7 +209,7 @@ def _mock_phrase(kind: str, context: dict) -> str:
 
 
 async def stream_phrase(kind: str, context: dict) -> AsyncIterator[str]:
-    """kind: ask | compare | no_match | off_topic | policy | policy_no_info."""
+    """kind: ask | compare | detail | no_match | off_topic | policy | policy_no_info."""
     if MOCK_LLM or kind in ("off_topic", "policy_no_info"):
         async for chunk in _mock_stream(_mock_phrase(kind, context)):
             yield chunk
@@ -186,6 +226,9 @@ async def stream_phrase(kind: str, context: dict) -> AsyncIterator[str]:
                    "Số sản phẩm đang khớp: {candidate_count}. Thông tin đã có: {slots}",
             "compare": "So sánh và tư vấn top 3 sau cho khách (ưu tiên của khách: {priorities}). "
                        "Nêu trade-off giữa 3 mẫu. DATA (nguồn duy nhất được phép dùng): {products}",
+            "detail": "Trả lời tự nhiên về MỘT sản phẩm khách đã chọn. Giải thích dễ hiểu các thông số có dữ liệu, "
+                      "đặc biệt câu hỏi của khách. Nếu warranty_parts trống thì nói rõ catalog chưa có thông tin; "
+                      "không dùng chính sách chung của cửa hàng. DATA (nguồn duy nhất được phép dùng): {product}",
             "no_match": "Không có sản phẩm khớp bộ lọc {slots}. Xin lỗi khách và đề xuất nới tiêu chí nào hợp lý. "
                         "TUYỆT ĐỐI không nêu bất kỳ con số/thông số sản phẩm nào (turn này không có dữ liệu sản phẩm).",
         }[kind].format(**{k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v
