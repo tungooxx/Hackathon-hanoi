@@ -24,6 +24,9 @@ from .session_history import (
 )
 
 
+_REDACTED_CONTACT = "[đã cung cấp số điện thoại]"
+
+
 class AgentState(TypedDict, total=False):
     user_input: str
     category: str | None
@@ -58,6 +61,7 @@ class AgentState(TypedDict, total=False):
     awaiting_checkout: bool
     checkout_contact_ready: bool
     checkout_contact_submitted: bool
+    fulfillment_available: bool
     catalog_preferences: list[dict[str, str]]
     # Session-history agent: cumulative compressed Markdown + uncompressed tail.
     session_content: str
@@ -107,9 +111,15 @@ async def intent_node(state: AgentState) -> dict:
     fulfillment_reply = False
     catalog_preferences = list(state.get("catalog_preferences", []))
     category = state.get("category")
+    selected_sku = state.get("selected_sku")
     if awaiting_checkout:
         if state.get("checkout_contact_submitted"):
-            return {"intent_type": "same_topic", "checkout_contact_ready": True}
+            return {
+                "intent_type": "same_topic",
+                "checkout_contact_ready": True,
+                "checkout_contact_submitted": False,
+                "user_input": _REDACTED_CONTACT,
+            }
         if llm.looks_like_checkout_cancellation(state["user_input"]):
             return {
                 "intent_type": "same_topic",
@@ -147,6 +157,7 @@ async def intent_node(state: AgentState) -> dict:
     )
     if awaiting_checkout and (result.intent_type == "policy" or llm.looks_like_policy(state["user_input"])):
         awaiting_checkout = False
+        selected_sku = None
         result = result.model_copy(update={"wants_checkout": False})
     if awaiting_fulfillment:
         required_key = fulfillment.fulfillment_provider.required_context(fulfillment_context)
@@ -339,6 +350,7 @@ async def intent_node(state: AgentState) -> dict:
         asked, ask_count = [], 0
         awaiting_fulfillment = False
         awaiting_checkout = False
+        selected_sku = None
     if result.category:
         category = result.category
 
@@ -387,6 +399,7 @@ async def intent_node(state: AgentState) -> dict:
         "fulfillment_context": fulfillment_context,
         "awaiting_fulfillment": awaiting_fulfillment,
         "awaiting_checkout": awaiting_checkout,
+        "selected_sku": selected_sku,
         "fulfillment_candidates": fulfillment_candidates,
         "catalog_preferences": catalog_preferences,
         "topic_changed": topic_changed,
@@ -422,7 +435,7 @@ async def history_control_node(state: AgentState) -> dict:
     recent_messages = append_message(
         recent_messages,
         role="user",
-        content=state["user_input"],
+        content=_REDACTED_CONTACT if state.get("checkout_contact_ready") else state["user_input"],
     )
     return {
         "session_content": session_content,
@@ -530,6 +543,8 @@ def route_after_intent(state: AgentState) -> str:
 
 
 def route_after_product_lookup(state: AgentState) -> str:
+    if state.get("wants_checkout") and state.get("explicit_product"):
+        return "checkout_prompt"
     return "compare" if state.get("found_in_catalog") else "enrich"
 
 
@@ -796,8 +811,10 @@ async def product_lookup_node(state: AgentState) -> dict:
     w({"type": "_stage", "stage": "product_lookup", "ms": round((time.perf_counter() - t0) * 1000)})
     if hits:
         category = state.get("category") or hits[0].get("category")
+        explicit_product = product_repo.find_named_product(hits, query) if len(hits) > 1 else hits[0]
         return {"candidates": hits[:20], "catalog_products": hits,
-                "category": category, "found_in_catalog": True}
+                "category": category, "explicit_product": explicit_product,
+                "found_in_catalog": True}
     return {"unknown_products": mentions or [query], "found_in_catalog": False}
 
 
@@ -1002,20 +1019,21 @@ async def fulfillment_check_node(state: AgentState) -> dict:
         product = shortlist[index]
     result = await fulfillment.fulfillment_provider.check(product["sku"], state["fulfillment_context"])
     w({"type": "text_chunk", "content": result.message})
-    if not state.get("fulfillment_for_checkout"):
+    if not state.get("fulfillment_for_checkout") or not result.available:
         w({"type": "done", "turn_type": "fulfillment_check"})
     return {
         "awaiting_fulfillment": False,
         "fulfillment_for_shortlist": False,
         "fulfillment_resume_comparison": False,
         "fulfillment_for_checkout": state.get("fulfillment_for_checkout", False),
+        "fulfillment_available": result.available,
         "selected_sku": product.get("sku") if product else selected_sku,
     }
 
 
 def route_after_fulfillment_check(state: AgentState) -> str:
     """Only a shortlist availability check continues into a recommendation."""
-    if state.get("fulfillment_for_checkout"):
+    if state.get("fulfillment_for_checkout") and state.get("fulfillment_available"):
         return "checkout_prompt"
     return "compare" if state.get("fulfillment_resume_comparison") else "end"
 
