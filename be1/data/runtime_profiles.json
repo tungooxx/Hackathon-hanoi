@@ -1,0 +1,338 @@
+{
+  "ban ui": {
+    "category": "ban ui",
+    "catalog_fingerprint": "cdd0b25554f07ba7417c3e8ba47aef5503f0c156a0532959a0913e7a99bd235f",
+    "questions": [
+      {
+        "slot": "Q_GEN_SPACE",
+        "question": "Khu vực lắp đặt có giới hạn chiều cao, ngang hoặc sâu không?",
+        "question_type": "numeric",
+        "possible_answers": [
+          "Cao tối đa (cm)",
+          "Ngang tối đa (cm)",
+          "Sâu tối đa (cm)"
+        ],
+        "field": "Kích thước - Khối lượng sản phẩm",
+        "operation": "max",
+        "hard_gate": true
+      },
+      {
+        "slot": "Q_IRON_VERTICAL",
+        "question": "Bạn có cần ủi quần áo khi đang treo theo chiều dọc không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "field": "Chức năng",
+        "operation": "contains",
+        "hard_gate": true
+      },
+      {
+        "slot": "Q_IRON_SAFETY",
+        "question": "Tính năng tự ngắt an toàn quan trọng với bạn ở mức nào?",
+        "question_type": "choice",
+        "possible_answers": [
+          "Thấp",
+          "Vừa",
+          "Cao"
+        ],
+        "field": "Chế độ an toàn",
+        "operation": "contains",
+        "hard_gate": false
+      },
+      {
+        "slot": "Q_IRON_FABRIC",
+        "question": "Bạn có thường ủi vải mỏng hoặc chất liệu dễ hư do nhiệt không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "field": "Tiện ích",
+        "operation": "contains",
+        "hard_gate": false
+      }
+    ],
+    "provisional": true
+  },
+  "Tivi": {
+    "category": "Tivi",
+    "catalog_fingerprint": "d67d0c643f7dddc00675562f0507a84e970087e0ca22b5410a76f8155ddce881",
+    "questions": [
+      {
+        "slot": "Q_GEN_SPACE",
+        "question": "Khu vực lắp đặt có giới hạn chiều cao, ngang hoặc sâu không?",
+        "question_type": "numeric",
+        "possible_answers": [
+          "Cao tối đa (cm)",
+          "Rộng tối đa (cm)",
+          "Sâu tối đa (cm)"
+        ],
+        "field": "Kích thước có chân, đặt bàn / Kích thước không chân, treo tường",
+        "operation": "contains",
+        "hard_gate": true
+      },
+      {
+        "slot": "Q_GEN_SMART",
+        "question": "Bạn có cần điều khiển qua điện thoại hoặc Wi‑Fi không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "field": "Điều khiển tivi bằng điện thoại",
+        "operation": "equals",
+        "hard_gate": false
+      }
+    ],
+    "provisional": true
+  },
+  "tivi": {
+    "category": "tivi",
+    "catalog_fingerprint": "ac8705687bcd2ff677290f7cbf1eb771c257953e99c29073fa66a701e1f607fe",
+    "questions": [
+      {
+        "slot": "CTX_BUDGET_MAX",
+        "question": "Ngân sách tối đa của bạn là bao nhiêu (VND)?",
+        "question_type": "numeric",
+        "possible_answers": [
+          "Số tiền VND"
+        ],
+        "answer_values": {
+          "unit": [
+            "VND"
+          ],
+          "hard_gate": [
+            "Yes"
+          ]
+        },
+        "field": "price_sale",
+        "operation": "max",
+        "ordered_values": [],
+        "unit": "VND",
+        "hard_gate": true,
+        "source": "ontology",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "PREF_SMART_CONTROL",
+        "question": "Bạn có cần điều khiển tivi qua điện thoại không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "answer_values": {
+          "hard_gate": [
+            "No"
+          ]
+        },
+        "field": "Điều khiển tivi bằng điện thoại",
+        "operation": "equals",
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": false,
+        "source": "ontology",
+        "customer_effort": 0.1,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "SmartThings"
+        ],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "GEN_03",
+        "question": "Bạn có muốn tivi hỗ trợ kết nối Bluetooth không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "answer_values": {
+          "hard_gate": [
+            "No"
+          ]
+        },
+        "field": "Kết nối không dây",
+        "operation": "contains",
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": false,
+        "source": "generated",
+        "customer_effort": 0.1,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "Bluetooth 5.0",
+          "Bluetooth 5.1",
+          "Bluetooth 5.2",
+          "Bluetooth 5.3",
+          "Bluetooth 5.4",
+          "Bluetooth (Kết nối loa, thiết bị di động)",
+          "Bluetooth (Kết nối bàn phím, chuột)"
+        ],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "GEN_04",
+        "question": "Bạn muốn tivi có kích thước màn hình tối đa bao nhiêu inch?",
+        "question_type": "numeric",
+        "possible_answers": [
+          "Kích thước màn hình (inch)"
+        ],
+        "answer_values": {
+          "hard_gate": [
+            "No"
+          ]
+        },
+        "field": "Kích cỡ màn hình",
+        "operation": "max",
+        "ordered_values": [],
+        "unit": "inch",
+        "hard_gate": false,
+        "source": "generated",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [],
+        "boolean_false_values": []
+      }
+    ],
+    "provisional": true
+  },
+  "loa": {
+    "category": "loa",
+    "catalog_fingerprint": "9631e718ff236b5b79b6a87f6f225247f852ec0c40a12fced188e390b83a3920",
+    "questions": [
+      {
+        "slot": "CTX_BUDGET_MAX",
+        "question": "Ngân sách tối đa của bạn là bao nhiêu?",
+        "question_type": "numeric",
+        "possible_answers": [
+          "Số tiền VND"
+        ],
+        "answer_values": {},
+        "field": "price_sale",
+        "operation": "max",
+        "ordered_values": [],
+        "unit": "VND",
+        "hard_gate": true,
+        "source": "ontology",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "CTX_INSTALL_SPACE",
+        "question": "Khu vực lắp đặt có giới hạn chiều cao, ngang hoặc sâu không? (đơn vị: cm)",
+        "question_type": "numeric",
+        "possible_answers": [
+          "Cao / ngang / sâu tối đa (cm)"
+        ],
+        "answer_values": {},
+        "field": "Kích thước loa thanh",
+        "operation": "max",
+        "ordered_values": [],
+        "unit": "cm",
+        "hard_gate": true,
+        "source": "ontology",
+        "customer_effort": 0.3,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "PREF_SMART_CONTROL",
+        "question": "Bạn có cần điều khiển qua điện thoại hoặc Wi‑Fi không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "answer_values": {},
+        "field": "Điều khiển bằng điện thoại",
+        "operation": "equals",
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": false,
+        "source": "ontology",
+        "customer_effort": 0.1,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "App Marshall (mới)"
+        ],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "GEN_AUDIO_TECH",
+        "question": "Bạn có muốn công nghệ âm thanh Dolby Atmos hoặc DTS:X không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "answer_values": {},
+        "field": "Công nghệ âm thanh",
+        "operation": "equals",
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": false,
+        "source": "generated",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "Dolby Atmos DTS:X"
+        ],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "GEN_CONNECTIVITY",
+        "question": "Bạn có cần kết nối không dây như Bluetooth, Wi‑Fi, AirPlay không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "answer_values": {},
+        "field": "Kết nối không dây",
+        "operation": "contains",
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": false,
+        "source": "generated",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "Kết nối Spotify AirPlay 2 Tidal Connect Bluetooth 5.3 LE Auracast Google cast"
+        ],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "GEN_CHANNEL_COUNT",
+        "question": "Bạn muốn hệ thống âm thanh 5.1 kênh?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "answer_values": {},
+        "field": "Số lượng kênh",
+        "operation": "equals",
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": false,
+        "source": "generated",
+        "customer_effort": 0.1,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "5.1 kênh"
+        ],
+        "boolean_false_values": []
+      }
+    ],
+    "provisional": true
+  }
+}

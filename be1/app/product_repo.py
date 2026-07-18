@@ -22,9 +22,94 @@ _NUM = re.compile(r"\d+(?:[.,]\d+)?")
 
 
 def _normal(value: str) -> str:
-    value = unicodedata.normalize("NFD", value.lower())
+    value = unicodedata.normalize("NFD", value.lower().replace("đ", "d"))
     value = "".join(char for char in value if unicodedata.category(char) != "Mn")
     return re.sub(r"[^a-z0-9]+", " ", value).strip()
+
+
+def _is_subsequence(abbreviation: str, label: str) -> bool:
+    """Whether an abbreviation's letters occur in order in a category label."""
+    iterator = iter(label.replace(" ", ""))
+    return all(any(char == current for current in iterator) for char in abbreviation)
+
+
+def _contains_label(query: str, label: str) -> bool:
+    """Match a normalized category as complete words, never inside another word."""
+    return bool(label and re.search(rf"(?:^| ){re.escape(label)}(?: |$)", query))
+
+
+def find_named_product(products: list[dict], query_text: str) -> dict | None:
+    """Find one unambiguous item explicitly named by the customer.
+
+    Matching is derived from catalog names and model-like tokens, not from a
+    hand-maintained product dictionary.
+    """
+    query = _normal(query_text)
+    if not query:
+        return None
+    compact_query = query.replace(" ", "")
+    scored: list[tuple[float, dict]] = []
+    for product in products:
+        name = _normal(str(product.get("name", "")))
+        if not name:
+            continue
+        compact_name = name.replace(" ", "")
+        if len(compact_name) >= 12 and compact_name in compact_query:
+            return product
+
+        name_tokens = set(name.split())
+        query_tokens = set(query.split())
+        overlap = name_tokens & query_tokens
+        coverage = len(overlap) / max(1, len(name_tokens))
+        identifiers = {
+            token for token in name_tokens
+            if len(token) >= 5 and any(char.isalpha() for char in token)
+            and any(char.isdigit() for char in token)
+        }
+        identifier_hits = identifiers & query_tokens
+        if identifier_hits or (len(overlap) >= 4 and coverage >= 0.72):
+            scored.append((coverage + 2 * len(identifier_hits), product))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    if not scored:
+        return None
+    if len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.15:
+        return scored[0][1]
+    return None
+
+
+async def resolve_category_candidates(query_text: str) -> tuple[str | None, list[str]]:
+    """Resolve one real ES category or return close alternatives to clarify."""
+    response = await elasticsearch.search({
+        "size": 0,
+        "aggs": {"categories": {"terms": {"field": "category_name.raw", "size": 1000}}},
+    })
+    query = _normal(query_text)
+    categories = [bucket["key"] for bucket in response.get("aggregations", {}).get("categories", {}).get("buckets", [])]
+    exact = [category for category in categories if _contains_label(query, _normal(category))]
+    if exact:
+        return max(exact, key=lambda item: len(_normal(item))), []
+
+    compact_query = query.replace(" ", "")
+    if 2 <= len(compact_query) <= 6:
+        scored = sorted([
+            (len(compact_query) / max(1, len(_normal(category).replace(" ", ""))), category)
+            for category in categories if _is_subsequence(compact_query, _normal(category))
+        ], reverse=True)
+        if scored:
+            if len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.12:
+                return scored[0][1], []
+            return None, [category for score, category in scored if score >= scored[0][0] - 0.12][:3]
+
+    fuzzy = sorted([
+        (SequenceMatcher(None, query, _normal(category)).ratio(), category)
+        for category in categories if len(query) >= 4
+        and SequenceMatcher(None, query, _normal(category)).ratio() >= 0.70
+    ], reverse=True)
+    if fuzzy:
+        if len(fuzzy) == 1 or fuzzy[0][0] - fuzzy[1][0] >= 0.08:
+            return fuzzy[0][1], []
+        return None, [category for score, category in fuzzy if score >= fuzzy[0][0] - 0.08][:3]
+    return None, []
 
 
 async def resolve_category(query_text: str) -> str | None:
@@ -35,9 +120,20 @@ async def resolve_category(query_text: str) -> str | None:
     })
     query = _normal(query_text)
     categories = [bucket["key"] for bucket in response.get("aggregations", {}).get("categories", {}).get("buckets", [])]
-    matches = [category for category in categories if _normal(category) in query]
+    matches = [category for category in categories if _contains_label(query, _normal(category))]
     if matches:
         return max(matches, key=lambda item: len(_normal(item)))
+    # Generic abbreviation support (TV, ML, MRCC ...).  It is only accepted
+    # when it identifies one real catalog category unambiguously.
+    compact_query = query.replace(" ", "")
+    if 2 <= len(compact_query) <= 6:
+        abbreviated = [
+            (len(compact_query) / max(1, len(_normal(category).replace(" ", ""))), category)
+            for category in categories if _is_subsequence(compact_query, _normal(category))
+        ]
+        abbreviated.sort(reverse=True)
+        if abbreviated and (len(abbreviated) == 1 or abbreviated[0][0] - abbreviated[1][0] >= 0.12):
+            return abbreviated[0][1]
     # Conservative typo recovery: require a close full-label match and an
     # unambiguous winner so generic/off-topic text is never routed as catalog.
     candidates = []
@@ -57,6 +153,11 @@ def _f(v: Any) -> float | None:
         return float(str(v).replace(",", "."))
     except (TypeError, ValueError):
         return None
+
+
+def _price(v: Any) -> float | None:
+    value = _f(v)
+    return value if value is not None and value > 0 else None
 
 
 def _spec_map(specs: list[dict]) -> dict[str, str]:
@@ -123,8 +224,8 @@ def _normalize(src: dict, category: str) -> dict:
         "name": name,
         "brand": src.get("brand", ""),
         "category": category,
-        "price_original": _f(src.get("original_price")),
-        "price_sale": _f(src.get("sale_price")),
+        "price_original": _price(src.get("original_price")),
+        "price_sale": _price(src.get("sale_price")),
         "area_min_m2": area_min,
         "area_max_m2": area_max,
         "noise_db_min": _parse_noise_min(specs),
