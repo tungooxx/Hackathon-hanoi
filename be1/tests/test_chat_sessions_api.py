@@ -55,8 +55,9 @@ def test_database_url() -> str:
 class FakeChatRuntime:
     def __init__(self) -> None:
         self.deleted_threads: list[str] = []
-        self.stream_calls: list[tuple[str, str]] = []
+        self.stream_calls: list[tuple[str, str, str]] = []
         self.guest_stream_calls: list[str] = []
+        self.next_session_content: str | None = None
 
     async def delete_thread(self, thread_id: str) -> None:
         self.deleted_threads.append(thread_id)
@@ -66,8 +67,16 @@ class FakeChatRuntime:
         *,
         thread_id: str,
         message: str,
+        session_content: str,
     ) -> AsyncIterator[dict]:
-        self.stream_calls.append((thread_id, message))
+        self.stream_calls.append((thread_id, message, session_content))
+        if self.next_session_content is not None:
+            content = self.next_session_content
+            self.next_session_content = None
+            yield {
+                "type": "_session_content_update",
+                "content": content,
+            }
         yield {"type": "text_chunk", "content": "Đã nhận"}
         yield {"type": "done", "turn_type": "off_topic"}
 
@@ -169,6 +178,7 @@ class ChatSessionApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created.status_code, 201)
         body = created.json()
         self.assertEqual(body["title"], "Máy lạnh phòng ngủ")
+        self.assertEqual(body["session_content"], "")
         self.assertNotIn("user_id", body)
         self.assertNotIn("langgraph_thread_id", body)
         session_id = body["id"]
@@ -292,10 +302,12 @@ class ChatSessionApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(len(self.runtime.stream_calls), 2)
 
-        first_thread, first_message = self.runtime.stream_calls[0]
-        second_thread, _ = self.runtime.stream_calls[1]
+        first_thread, first_message, first_content = self.runtime.stream_calls[0]
+        second_thread, _, second_content = self.runtime.stream_calls[1]
         self.assertEqual(first_thread, second_thread)
         self.assertNotEqual(first_thread, session_id)
+        self.assertEqual(first_content, "")
+        self.assertEqual(second_content, "")
         self.assertEqual(
             first_message,
             "Tư vấn máy lạnh cho phòng 20 mét vuông",
@@ -306,6 +318,36 @@ class ChatSessionApiTests(unittest.IsolatedAsyncioTestCase):
             refreshed.json()["title"],
             "Tư vấn máy lạnh cho phòng 20 mét vuông",
         )
+
+    async def test_internal_history_event_persists_markdown_for_next_turn(
+        self,
+    ) -> None:
+        await self._register(self.owner, self.owner_phone)
+        created = await self.owner.post("/chat/sessions", json={})
+        session_id = created.json()["id"]
+        markdown = (
+            "# Session context\n\n"
+            "## Earlier needs\n\n"
+            "- User wanted a quiet air conditioner."
+        )
+        self.runtime.next_session_content = markdown
+
+        first = await self.owner.post(
+            f"/chat/sessions/{session_id}/messages",
+            json={"message": "Bây giờ tư vấn máy giặt"},
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertNotIn("_session_content_update", first.text)
+
+        stored = await self.owner.get(f"/chat/sessions/{session_id}")
+        self.assertEqual(stored.json()["session_content"], markdown)
+
+        second = await self.owner.post(
+            f"/chat/sessions/{session_id}/messages",
+            json={"message": "Loại tiết kiệm điện"},
+        )
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(self.runtime.stream_calls[-1][2], markdown)
 
     async def test_client_cannot_supply_identity_or_empty_content(self) -> None:
         await self._register(self.owner, self.owner_phone)
