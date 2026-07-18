@@ -47,7 +47,7 @@ KHÔNG phải off_topic.
 ("tủ để đồ ăn khỏi thiu" -> tủ lạnh; "air purifier" -> máy lọc không khí; "mún mua máy sấy tóc" -> máy sấy tóc). \
 Nếu có DANH MỤC KHO được cung cấp bên dưới: chọn CHÉP NGUYÊN VĂN đúng một nhãn trong đó khớp nhu cầu nhất; \
 không nhãn nào khớp -> để trống. Câu nói vu vơ không phải nhu cầu mua sắm thì KHÔNG gán category.
-- Chỉ điền budget_max khi khách nói rõ mức tối đa ("dưới", "không quá", "tối đa"). Chỉ điền budget_min khi khách nói rõ mức tối thiểu ("trên", "từ ... trở lên"). Một con số giá không có ngữ cảnh phải để trống để hệ thống hỏi làm rõ, không được tự hiểu là mức tối đa.
+- Chỉ điền budget_max khi khách nói rõ mức tối đa ("dưới", "không quá", "tối đa"). Chỉ điền budget_min khi khách nói rõ mức tối thiểu ("trên", "từ ... trở lên"). Với mức giá gần đúng hoặc mức dự định không kèm điều kiện, điền budget_target; không được tự hiểu là mức tối đa.
 - product_mentions: chép NGUYÊN VĂN tên/mã sản phẩm khách gõ, không sửa chính tả.
 - Nếu khách nói "loại/mẫu số 1", "máy 1", "mẫu đầu", hoặc yêu cầu thông tin chi tiết về một mẫu
   trong danh sách vừa gợi ý: đặt selected_index (1-3), wants_product_details=true và intent_type=same_topic.
@@ -201,7 +201,7 @@ def _mock_intent(text: str, category: str | None, expected_question: dict | None
         itype = "off_topic"
     result = IntentResult(
         intent_type=itype, category=cat, priorities=prios,
-        budget_max=slots.get("budget_max"), area_m2=slots.get("area_m2"),
+        budget_max=slots.get("budget_max"), budget_target=slots.get("budget_max"), area_m2=slots.get("area_m2"),
         selected_index=selected_index, wants_product_details=wants_details,
         product_mentions=product_mentions,
     )
@@ -230,7 +230,16 @@ async def extract_intent(
     if MOCK_LLM:
         return _mock_intent(text, category, expected_question)
     llm = _get_llm(LLM_MODEL_SMALL, 0.0)
+    budget_interpretation = (
+        "Normalize Vietnamese money expressions, slang, and likely typos to VND. "
+        "Use budget_max for an explicit upper bound, budget_min for an explicit lower bound, "
+        "and budget_target for an approximate or bare intended spend; never invent an amount. "
+        "When the customer states two monetary endpoints as one bounded interval, return both "
+        "budget_min and budget_max in ascending order and leave budget_target empty. "
+        "An explicit interval takes precedence over approximate wording around it."
+    )
     system = INTENT_SYSTEM.format(category=category or "chưa có", slots=json.dumps(slots, ensure_ascii=False))
+    system += "\n" + budget_interpretation
     if known_categories:
         # Nhãn category thật từ Elasticsearch: cho model nhỏ map ngôn ngữ đời thường
         # ("tủ đựng đồ ăn", "air purifier") về đúng nhãn kho thay vì đoán mã tự chế.

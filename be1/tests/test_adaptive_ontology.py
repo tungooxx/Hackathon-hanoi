@@ -3,7 +3,7 @@ from pathlib import Path
 from hashlib import sha256
 import re
 import sys
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -14,7 +14,7 @@ from app.graph import _customer_visible_slots, route_after_intent
 from app.decision_gap import choose_next_question
 from app.product_repo import find_named_product
 from app.product_repo import _contains_label, _is_subsequence
-from app.profile_compiler import RuntimeQuestion, _validate_questions
+from app.profile_compiler import RuntimeProfile, RuntimeQuestion, _validate_questions
 from app.schemas import SlotDef
 from app.scoring import rank_top3
 
@@ -66,6 +66,32 @@ def test_unmapped_catalog_uses_decision_gap_fallback() -> None:
     question = choose_next_question("Bàn ủi", {}, [], products, [], schema)
     assert question is not None
     assert question.slot in {item.name for item in schema}
+
+
+def test_uncached_catalog_compiles_a_runtime_profile_for_decision_gap() -> None:
+    products = [
+        {"sku": "dry", "price_sale": 200_000, "attributes": {"iron_type": "dry"}},
+        {"sku": "steam", "price_sale": 300_000, "attributes": {"iron_type": "steam"}},
+        {"sku": "steam_plus", "price_sale": 450_000, "attributes": {"iron_type": "steam"}},
+    ]
+    profile = RuntimeProfile(
+        category="new_category", catalog_fingerprint="test", provisional=True,
+        questions=[RuntimeQuestion(
+            slot="iron_type", question="Anh/chị muốn ủi khô hay dùng hơi nước ạ?",
+            question_type="choice", field="iron_type", operation="equals",
+            answer_values={"ủi khô": ["dry"], "hơi nước": ["steam"]},
+            customer_effort=0.2, requires_technical_knowledge=False,
+        )],
+    )
+    with (
+        patch("app.profile_compiler.get_cached_profile", return_value=None),
+        patch("app.profile_compiler.compile_profile", new=AsyncMock(return_value=profile)) as compile_mock,
+    ):
+        schema = asyncio.run(ontology.get_runtime_slot_schema("new_category", products))
+
+    compile_mock.assert_awaited_once()
+    assert any(item.maps_to_field == "attributes.iron_type" for item in schema)
+    assert choose_next_question("new_category", {}, [], products, [], schema) is not None
 
 
 def test_tv_composes_without_battery(tmp_path: Path) -> None:

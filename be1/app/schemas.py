@@ -7,6 +7,7 @@ Category = str
 
 
 class IntentResult(BaseModel):
+    budget_target: Optional[float] = Field(None, description="Approximate intended budget, VND")
     """Output của LLM call #1 — gộp intent + slot extraction + routing."""
 
     intent_type: Literal["new_topic", "same_topic", "off_topic", "force_answer", "policy"] = Field(
@@ -77,6 +78,7 @@ class IntentResult(BaseModel):
         return {
             k: v
             for k, v in {
+                "budget_target": self.budget_target,
                 "budget_max": self.budget_max,
                 "budget_min": self.budget_min,
                 "area_m2": self.area_m2,
