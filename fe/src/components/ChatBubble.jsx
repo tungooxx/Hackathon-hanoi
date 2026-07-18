@@ -1,12 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-
-const MOCK_REPLIES = [
-  'Dạ em là trợ lý AI của Điện máy XANH, em có thể giúp gì cho anh/chị ạ? 😊',
-  'Sản phẩm này hiện đang có chương trình giảm giá đến 50% trong tuần Lễ hội Worldcup ạ!',
-  'Anh/chị muốn tìm máy lạnh, tủ lạnh hay tivi ạ? Em có thể gợi ý mẫu phù hợp với ngân sách.',
-  'Dạ sản phẩm còn hàng ạ, anh/chị có thể đặt mua online hoặc ghé cửa hàng gần nhất.',
-  'Em đã ghi nhận yêu cầu của anh/chị, nhân viên tư vấn sẽ liên hệ trong ít phút ạ.',
-]
+import { streamChat, formatVnd } from '../lib/chatApi'
 
 function initialMessages() {
   return [
@@ -18,12 +11,65 @@ function initialMessages() {
   ]
 }
 
+// session_id cố định theo lần mở trang -> BE1 nhớ được ngữ cảnh hội thoại
+function newSessionId() {
+  return `web-${Date.now()}-${Math.floor(Math.random() * 1e4)}`
+}
+
+const PANEL_MIN_WIDTH = 300
+const PANEL_MIN_HEIGHT = 360
+const PANEL_MAX_WIDTH = 640
+const PANEL_MAX_HEIGHT = 800
+
 export default function ChatBubble() {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState(initialMessages)
   const [input, setInput] = useState('')
   const [typing, setTyping] = useState(false)
+  const [panelSize, setPanelSize] = useState({ width: 340, height: 460 })
+  const [resizing, setResizing] = useState(false)
   const bodyRef = useRef(null)
+  const sessionId = useRef(newSessionId())
+  const abortRef = useRef(null)
+  const resizeStartRef = useRef(null)
+
+  const onResizeStart = (e) => {
+    e.preventDefault()
+    resizeStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      width: panelSize.width,
+      height: panelSize.height,
+    }
+    setResizing(true)
+  }
+
+  useEffect(() => {
+    if (!resizing) return
+
+    const onMove = (e) => {
+      const start = resizeStartRef.current
+      if (!start) return
+      // Panel is anchored to bottom-right; kéo góc trên-trái => tăng width/height khi kéo ra ngoài (dx/dy âm)
+      const dx = start.x - e.clientX
+      const dy = start.y - e.clientY
+      setPanelSize({
+        width: Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, start.width + dx)),
+        height: Math.min(PANEL_MAX_HEIGHT, Math.max(PANEL_MIN_HEIGHT, start.height + dy)),
+      })
+    }
+    const onUp = () => {
+      resizeStartRef.current = null
+      setResizing(false)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [resizing])
 
   useEffect(() => {
     if (bodyRef.current) {
@@ -31,19 +77,51 @@ export default function ChatBubble() {
     }
   }, [messages, typing])
 
+  // cập nhật 1 phần của bong bóng bot đang stream
+  const patchBot = (botId, patch) => {
+    setMessages((m) =>
+      m.map((msg) =>
+        msg.id === botId
+          ? { ...msg, ...(typeof patch === 'function' ? patch(msg) : patch) }
+          : msg,
+      ),
+    )
+  }
+
   const send = () => {
     const text = input.trim()
-    if (!text) return
-    setMessages((m) => [...m, { id: Date.now(), from: 'user', text }])
+    if (!text || typing) return
+
+    const botId = Date.now() + 1
+    setMessages((m) => [
+      ...m,
+      { id: Date.now(), from: 'user', text },
+      { id: botId, from: 'bot', text: '', funnel: null, products: null, reason: null },
+    ])
     setInput('')
     setTyping(true)
 
-    // Mock reply — swap this block for a real API call to your AI backend.
-    const reply = MOCK_REPLIES[Math.floor(Math.random() * MOCK_REPLIES.length)]
-    setTimeout(() => {
-      setTyping(false)
-      setMessages((m) => [...m, { id: Date.now() + 1, from: 'bot', text: reply }])
-    }, 900)
+    abortRef.current = new AbortController()
+    streamChat({
+      sessionId: sessionId.current,
+      message: text,
+      signal: abortRef.current.signal,
+      handlers: {
+        onFunnel: (f) => patchBot(botId, { funnel: f }),
+        onQuestion: (q) => patchBot(botId, { reason: q.reason }),
+        onText: (chunk) => patchBot(botId, (msg) => ({ text: msg.text + chunk })),
+        onProducts: (products) => patchBot(botId, { products }),
+        onDone: () => setTyping(false),
+        onError: () => {
+          patchBot(botId, (msg) => ({
+            text:
+              msg.text ||
+              'Dạ hệ thống đang bận, anh/chị thử lại sau giúp em nhé. 🙏',
+          }))
+          setTyping(false)
+        },
+      },
+    })
   }
 
   const onKeyDown = (e) => {
@@ -53,7 +131,18 @@ export default function ChatBubble() {
   return (
     <div className="chat-widget">
       {open && (
-        <div className="chat-panel">
+        <div
+          className={`chat-panel${resizing ? ' chat-panel--resizing' : ''}`}
+          style={{
+            '--chat-panel-width': `${panelSize.width}px`,
+            '--chat-panel-height': `${panelSize.height}px`,
+          }}
+        >
+          <div
+            className="chat-panel__resize-handle"
+            onPointerDown={onResizeStart}
+            aria-label="Kéo để đổi kích thước"
+          />
           <div className="chat-panel__header">
             <div className="chat-panel__avatar">🤖</div>
             <div className="chat-panel__title">
@@ -69,10 +158,33 @@ export default function ChatBubble() {
 
           <div className="chat-panel__body" ref={bodyRef}>
             {messages.map((m) => (
-              <div key={m.id} className={`chat-bubble chat-bubble--${m.from}`}>
-                {m.text}
+              <div key={m.id} className={`chat-msg chat-msg--${m.from}`}>
+                {m.funnel && (
+                  <div className="chat-funnel">
+                    🔎 Còn <b>{m.funnel.count}</b>/{m.funnel.total} mẫu khớp
+                    {m.funnel.filters && Object.keys(m.funnel.filters).length > 0 && (
+                      <span className="chat-funnel__filters">
+                        {' '}
+                        · {describeFilters(m.funnel.filters)}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {(m.text || m.from === 'user') && (
+                  <div className={`chat-bubble chat-bubble--${m.from}`}>{m.text}</div>
+                )}
+
+                {m.products && m.products.length > 0 && (
+                  <div className="chat-cards">
+                    {m.products.map((p) => (
+                      <ProductCard key={p.sku || p.model_code || p.name} p={p} />
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
+
             {typing && (
               <div className="chat-bubble chat-bubble--bot chat-bubble--typing">
                 <span />
@@ -103,4 +215,45 @@ export default function ChatBubble() {
       </button>
     </div>
   )
+}
+
+function ProductCard({ p }) {
+  const area =
+    p.area_min_m2 != null && p.area_max_m2 != null
+      ? `${p.area_min_m2}-${p.area_max_m2}m²`
+      : null
+  return (
+    <div className="chat-card">
+      <div className="chat-card__name">{p.name}</div>
+      <div className="chat-card__price">
+        {formatVnd(p.price_sale)}
+        {p.price_original > p.price_sale && (
+          <span className="chat-card__price-old">{formatVnd(p.price_original)}</span>
+        )}
+      </div>
+      <div className="chat-card__specs">
+        {p.energy_stars != null && <span>⭐ {p.energy_stars} sao điện</span>}
+        {p.noise_db_min != null && <span>🔇 {p.noise_db_min}dB</span>}
+        {area && <span>📐 {area}</span>}
+        {p.inverter && <span>⚡ Inverter</span>}
+      </div>
+    </div>
+  )
+}
+
+const SLOT_LABELS = {
+  budget_max: 'ngân sách',
+  area_m2: 'diện tích',
+  brand: 'hãng',
+}
+
+function describeFilters(filters) {
+  return Object.entries(filters)
+    .map(([k, v]) => {
+      const label = SLOT_LABELS[k] || k
+      if (k === 'budget_max') return `${label} ≤ ${formatVnd(v)}`
+      if (k === 'area_m2') return `${label} ${v}m²`
+      return `${label}: ${v}`
+    })
+    .join(', ')
 }
