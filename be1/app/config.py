@@ -15,10 +15,8 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL_SMALL = os.getenv("LLM_MODEL_SMALL", "llama-3.3-70b-versatile")
 LLM_MODEL_LARGE = os.getenv("LLM_MODEL_LARGE", "llama-3.3-70b-versatile")
 
-# rỗng -> dùng fixture local thay vì gọi BE2 của Kiên
-BE2_BASE_URL = os.getenv("BE2_BASE_URL", "")
-
-ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+# ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+ELASTICSEARCH_URL = "https://disprove-empower-stony.ngrok-free.dev"
 ELASTICSEARCH_INDEX = os.getenv("ELASTICSEARCH_PRODUCTS_INDEX", "products")
 ELASTICSEARCH_USERNAME = os.getenv("ELASTICSEARCH_USERNAME", "")
 ELASTICSEARCH_PASSWORD = os.getenv("ELASTICSEARCH_PASSWORD", "")

@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
-from . import be2_client, llm, ontology_stub, rag
+from . import llm, ontology_stub, product_repo, rag
 from .config import COMPARE_THRESHOLD, MAX_ASK_TURNS, RAG_MIN_SCORE, RAG_TOP_K
 from .filtering import apply_hard_filters
 from .scoring import rank_top3
@@ -64,7 +64,7 @@ async def intent_node(state: AgentState) -> dict:
 async def retrieve_node(state: AgentState) -> dict:
     w = get_stream_writer()
     t0 = time.perf_counter()
-    products = await be2_client.get_products(state["category"])
+    products = await product_repo.get_products(state["category"])
     candidates = apply_hard_filters(products, state["slots"])
     w({"type": "_stage", "stage": "retrieve", "ms": round((time.perf_counter() - t0) * 1000)})
     w({"type": "funnel_count", "count": len(candidates), "total": len(products),

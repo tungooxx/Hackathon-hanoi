@@ -191,7 +191,16 @@ async def stream_phrase(kind: str, context: dict) -> AsyncIterator[str]:
         }[kind].format(**{k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v
                           for k, v in context.items()})
     llm = _get_llm(LLM_MODEL_LARGE, 0.2 if kind == "policy" else 0.3)
-    async for chunk in llm.astream([("system", system), ("user", user_msg)],
-                                   config=lf_config(f"phrase_{kind}")):
-        if chunk.content:
-            yield chunk.content
+    msgs = [("system", system), ("user", user_msg)]
+    cfg = lf_config(f"phrase_{kind}")
+    for attempt in range(3):  # FPT thỉnh thoảng 404/timeout lúc mở stream -> retry khi CHƯA yield
+        started = False
+        try:
+            async for chunk in llm.astream(msgs, config=cfg):
+                if chunk.content:
+                    started = True
+                    yield chunk.content
+            return
+        except Exception:
+            if started or attempt == 2:  # đã stream dở -> không retry (tránh lặp text)
+                raise
