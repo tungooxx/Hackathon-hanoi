@@ -95,11 +95,15 @@ async def _embed(texts: list[str]) -> list[list[float]]:
     out: list[list[float]] = []
     async with httpx.AsyncClient(timeout=60) as client:
         for i in range(0, len(texts), 64):  # batch tránh giới hạn payload
-            resp = await client.post(
-                url, headers=headers,
-                json={"model": EMBED_MODEL, "input": texts[i:i + 64]},
-            )
-            resp.raise_for_status()
+            body = {"model": EMBED_MODEL, "input": texts[i:i + 64]}
+            for attempt in range(3):  # kết nối lạnh tới FPT hay timeout lần đầu -> retry
+                try:
+                    resp = await client.post(url, headers=headers, json=body)
+                    resp.raise_for_status()
+                    break
+                except (httpx.TransportError, httpx.HTTPStatusError):
+                    if attempt == 2:
+                        raise
             data = sorted(resp.json()["data"], key=lambda d: d["index"])
             out.extend(d["embedding"] for d in data)
     return out
