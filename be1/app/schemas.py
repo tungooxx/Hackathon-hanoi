@@ -1,6 +1,6 @@
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Priority = Literal["tiet_kiem_dien", "it_on", "gia_re"]
 Category = str
@@ -8,6 +8,9 @@ Category = str
 
 class IntentResult(BaseModel):
     budget_target: Optional[float] = Field(None, description="Approximate intended budget, VND")
+    budget_mode: Literal["min", "max", "range", "target"] | None = Field(
+        None, description="Meaning of the extracted budget values"
+    )
     """Output của LLM call #1 — gộp intent + slot extraction + routing."""
 
     intent_type: Literal["new_topic", "same_topic", "off_topic", "force_answer", "policy"] = Field(
@@ -73,6 +76,26 @@ class IntentResult(BaseModel):
         False,
         description="Customer explicitly abandons the active question to change product category or ask policy",
     )
+
+    @model_validator(mode="after")
+    def validate_budget_mode(self) -> "IntentResult":
+        values = {
+            "min": (self.budget_min is not None, self.budget_max is None, self.budget_target is None),
+            "max": (self.budget_min is None, self.budget_max is not None, self.budget_target is None),
+            "range": (
+                self.budget_min is not None and self.budget_max is not None and self.budget_min < self.budget_max,
+                self.budget_target is None,
+                True,
+            ),
+            "target": (self.budget_min is None, self.budget_max is None, self.budget_target is not None),
+        }
+        if self.budget_mode and not all(values[self.budget_mode]):
+            raise ValueError(f"budget_mode={self.budget_mode!r} does not match its budget values")
+        if not self.budget_mode and any(value is not None for value in (
+            self.budget_min, self.budget_max, self.budget_target,
+        )):
+            raise ValueError("budget values require budget_mode")
+        return self
 
     def slot_dict(self) -> dict[str, Any]:
         return {

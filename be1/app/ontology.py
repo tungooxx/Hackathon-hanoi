@@ -276,8 +276,10 @@ def _value_constraint(definition: SlotDef, value: Any, products: list[dict]) -> 
         return None
     field = definition.maps_to_field
     if field in {"price_sale", "price_original"}:
-        numbers = _numbers(value)
-        return ("max", numbers[-1]) if numbers else None
+        # Price bounds are interpreted by the contextual intent model and
+        # executed through budget_min/max/target slots in graph.py. Do not
+        # re-parse a raw answer here without its conversational context.
+        return None
     if not field.startswith("attributes."):
         return None
     key = field.split(".", 1)[1]

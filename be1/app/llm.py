@@ -153,8 +153,6 @@ def _mock_intent(text: str, category: str | None, expected_question: dict | None
     low = text.lower()
     cat = None  # Category is resolved against real Elasticsearch data in graph.py.
     slots: dict = {}
-    if m := re.search(r"(\d+(?:[.,]\d+)?)\s*(?:tr\b|trieu|triệu)", low):
-        slots["budget_max"] = float(m.group(1).replace(",", ".")) * 1_000_000
     if m := re.search(r"(\d+(?:[.,]\d+)?)\s*(?:m2|m²|mét vuông|met vuong)", low):
         slots["area_m2"] = float(m.group(1).replace(",", "."))
     prios = []
@@ -199,7 +197,7 @@ def _mock_intent(text: str, category: str | None, expected_question: dict | None
         itype = "off_topic"
     result = IntentResult(
         intent_type=itype, category=cat, priorities=prios,
-        budget_max=slots.get("budget_max"), budget_target=slots.get("budget_max"), area_m2=slots.get("area_m2"),
+        area_m2=slots.get("area_m2"),
         selected_index=selected_index, wants_product_details=wants_details,
         product_mentions=product_mentions,
     )
@@ -232,6 +230,8 @@ async def extract_intent(
         "Normalize Vietnamese money expressions, slang, and likely typos to VND. "
         "Use budget_max for an explicit upper bound, budget_min for an explicit lower bound, "
         "and budget_target for an approximate or bare intended spend; never invent an amount. "
+        "Whenever you emit a budget, set budget_mode to min, max, range, or target and populate only "
+        "the fields allowed by that mode. "
         "When the customer states two monetary endpoints as one bounded interval, return both "
         "budget_min and budget_max in ascending order and leave budget_target empty. "
         "An explicit interval takes precedence over approximate wording around it."
