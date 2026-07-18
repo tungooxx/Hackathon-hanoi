@@ -3,7 +3,7 @@ name: be1
 include:
   - path: ./apps/postgres.yml
     env_file: ./.env.docker
-  # - path: ./apps/elasticsearch.yml
-  #   env_file: ./.env.docker
+  - path: ./apps/elasticsearch.yml
+    env_file: ./.env.docker
   - path: ./apps/qdrant.yml
     env_file: ./.env.docker

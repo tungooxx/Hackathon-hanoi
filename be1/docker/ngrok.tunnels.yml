@@ -1,0 +1,8 @@
+version: "3"
+tunnels:
+  elasticsearch:
+    proto: http
+    addr: 9200
+  qdrant-http:
+    proto: http
+    addr: 6333

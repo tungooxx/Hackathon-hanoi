@@ -69,6 +69,49 @@ class IntentResult(BaseModel):
         }
 
 
+class WebSpec(BaseModel):
+    """Thông số 1 sản phẩm lạ trích từ web (LLM call trong fetch_product_specs).
+
+    CHỈ dùng field vô hướng — tránh dict tự do vì nhiều provider OpenAI-compatible không
+    điền được object additionalProperties ở chế độ structured output. catalog_slots được
+    dựng lại trong code từ các field này (xem to_payload).
+    """
+
+    product_name: str
+    found: bool = True
+    category: Optional[Category] = Field(
+        None, description="Loại SP chuẩn của catalog nếu suy ra được: may_lanh, tu_lanh, may_giat"
+    )
+    brand: Optional[str] = None
+    budget_max: Optional[float] = Field(None, description="Giá tham khảo trên web, đơn vị VND")
+    area_m2: Optional[float] = Field(None, description="Diện tích phòng phù hợp (m²) suy từ công suất")
+    needs_heating: Optional[bool] = Field(None, description="True nếu là máy 2 chiều (có sưởi)")
+    key_specs: str = Field("", description="Các thông số chính, mô tả ngắn gọn dạng văn bản")
+    summary: str = Field("", description="Tóm tắt 1-2 câu về sản phẩm cho khách")
+
+    def to_payload(self) -> dict[str, Any]:
+        """Chuẩn hoá về dict các node dùng, kèm catalog_slots dựng từ field vô hướng."""
+        slots: dict[str, Any] = {}
+        if self.budget_max is not None:
+            slots["budget_max"] = self.budget_max
+        if self.area_m2 is not None:
+            slots["area_m2"] = self.area_m2
+        if self.brand:
+            slots["brand"] = self.brand
+        if self.needs_heating is not None:
+            slots["needs_heating"] = self.needs_heating
+        return {
+            "product_name": self.product_name, "found": self.found, "category": self.category,
+            "brand": self.brand, "catalog_slots": slots,
+            "key_specs": self.key_specs, "summary": self.summary,
+        }
+
+
+class ChatRequest(BaseModel):
+    session_id: str
+    message: str
+
+
 # ---- Interface với Tùng (ontology) — BE1 chỉ gọi 2 hàm theo shape này ----
 
 class SlotDef(BaseModel):

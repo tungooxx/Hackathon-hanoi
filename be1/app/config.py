@@ -17,6 +17,7 @@ LLM_MODEL_SMALL = os.getenv("LLM_MODEL_SMALL", "llama-3.3-70b-versatile")
 LLM_MODEL_LARGE = os.getenv("LLM_MODEL_LARGE", "llama-3.3-70b-versatile")
 
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://127.0.0.1:9200")
+# ELASTICSEARCH_URL = "https://disprove-empower-stony.ngrok-free.dev"
 ELASTICSEARCH_INDEX = os.getenv("ELASTICSEARCH_PRODUCTS_INDEX", "products")
 ELASTICSEARCH_USERNAME = os.getenv("ELASTICSEARCH_USERNAME", "")
 ELASTICSEARCH_PASSWORD = os.getenv("ELASTICSEARCH_PASSWORD", "")
@@ -118,6 +119,16 @@ AUTH_REFRESH_COOKIE_PATH = "/auth"
 
 MAX_ASK_TURNS = int(os.getenv("MAX_ASK_TURNS", "3"))
 COMPARE_THRESHOLD = int(os.getenv("COMPARE_THRESHOLD", "3"))
+
+# --- Web search / enrichment (sản phẩm lạ không có trong catalog) ---
+# MOCK_LLM=1 hoặc thiếu TAVILY_API_KEY -> dùng fixture offline, luồng vẫn chạy.
+WEB_SEARCH_PROVIDER = os.getenv("WEB_SEARCH_PROVIDER", "tavily")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+TAVILY_BASE_URL = os.getenv("TAVILY_BASE_URL", "https://api.tavily.com")
+WEB_SEARCH_MAX_RESULTS = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+WEB_SEARCH_TIMEOUT_SECONDS = float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "20"))
+# chặn vòng lặp web vô hạn: số lần search-lại-theo-nhu-cầu tối đa mỗi phiên làm giàu
+MAX_ENRICH_ITERS = int(os.getenv("MAX_ENRICH_ITERS", "2"))
 
 # --- RAG chính sách: embedding OpenAI-compatible, mặc định dùng lại LLM_* ---
 # EMBED_MODEL rỗng (hoặc MOCK_LLM=1) -> fallback lexical, chạy offline không cần key/Qdrant.

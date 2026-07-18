@@ -959,6 +959,97 @@
   color: #555;
 }
 
+/* ---- Agent activity ("đang suy nghĩ" / tool calling) ---- */
+.agent-activity {
+  align-self: stretch;
+  border: 1px solid #d7e3f4;
+  background: #eef4fd;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.agent-activity--running {
+  border-color: #b7d0f2;
+  background: #e7f0fe;
+}
+.agent-activity__head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: #1a3a63;
+  text-align: left;
+}
+.agent-activity__spark {
+  font-size: 13px;
+}
+.agent-activity--running .agent-activity__spark {
+  animation: agent-pulse 1.1s infinite ease-in-out;
+}
+@keyframes agent-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+.agent-activity__label {
+  flex: 1;
+  font-weight: 600;
+}
+.agent-activity__chevron {
+  color: #6b8cb5;
+  font-size: 11px;
+}
+.agent-activity__list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px solid #dbe7f7;
+}
+.agent-activity__step {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #33475e;
+  line-height: 1.35;
+}
+.agent-activity__ico {
+  flex: none;
+}
+.agent-activity__txt {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.agent-activity__count {
+  color: #2e7d32;
+  font-style: normal;
+}
+.agent-activity__detail {
+  color: #6b7a8c;
+  font-style: normal;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.agent-activity__tool {
+  flex: none;
+  font-size: 10px;
+  color: #7089a8;
+  background: #dbe7f7;
+  padding: 0 5px;
+  border-radius: 5px;
+  align-self: center;
+}
+.agent-activity__step--running .agent-activity__txt {
+  color: #1a3a63;
+}
+
 .chat-cards {
   align-self: stretch;
   display: flex;

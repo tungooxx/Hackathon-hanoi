@@ -7,8 +7,15 @@ import json
 import re
 from collections.abc import AsyncIterator
 
-from .config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_LARGE, LLM_MODEL_SMALL, MOCK_LLM
-from .schemas import IntentResult
+from .config import (
+    LLM_API_KEY,
+    LLM_BASE_URL,
+    LLM_MODEL_LARGE,
+    LLM_MODEL_SMALL,
+    MAX_ENRICH_ITERS,
+    MOCK_LLM,
+)
+from .schemas import IntentResult, WebSpec
 from .tracing import lf_config
 
 INTENT_SYSTEM = """Bạn là bộ phân tích ý định cho trợ lý bán hàng Điện Máy Xanh.
@@ -79,6 +86,17 @@ _POLICY_KW = [
 ]
 
 
+def looks_like_policy(text: str) -> bool:
+    """Tín hiệu chính sách/CSKH tất định (bảo hành, đổi trả, giao hàng...).
+
+    Dùng làm lưới an toàn ở router: model intent nhỏ đôi khi đọc 'bảo hành ip8'
+    thành product_mentions và bỏ sót intent=policy, khiến câu hỏi CSKH bị nhánh
+    'sản phẩm lạ' cướp mất -> trả lời 'nới lỏng bộ lọc' vô nghĩa.
+    """
+    low = (text or "").lower()
+    return any(kw in low for kw in _POLICY_KW)
+
+
 def _mock_intent(text: str, category: str | None, expected_question: dict | None = None) -> IntentResult:
     low = text.lower()
     cat = None  # Category is resolved against real Elasticsearch data in graph.py.
@@ -102,6 +120,14 @@ def _mock_intent(text: str, category: str | None, expected_question: dict | None
     elif re.search(r"mẫu đầu|mau dau|loại đầu|loai dau", low):
         selected_index = 1
     wants_details = bool(selected_index or re.search(r"thông tin|thong tin|chi tiết|chi tiet", low))
+    # product_mentions: bắt cụm "hãng + mã model" (vd "Daikin FTKB25", "LG V13ENH1").
+    # Chỉ heuristic cho MOCK; LLM thật chép nguyên văn theo prompt.
+    _brands = ("daikin", "panasonic", "lg", "samsung", "toshiba", "casper", "aqua",
+               "electrolux", "sharp", "mitsubishi", "gree", "midea", "sanyo", "funiki")
+    product_mentions: list[str] = []
+    # model token phải chứa chữ số (mã máy) -> tránh bắt nhầm "daikin inverter"
+    for m in re.finditer(r"\b(" + "|".join(_brands) + r")\b[\s-]*([a-z0-9\-]*\d[a-z0-9\-]*)", low):
+        product_mentions.append(f"{m.group(1)} {m.group(2)}".strip())
     if force:
         itype = "force_answer"
     elif wants_details:
@@ -123,6 +149,7 @@ def _mock_intent(text: str, category: str | None, expected_question: dict | None
         intent_type=itype, category=cat, priorities=prios,
         budget_max=slots.get("budget_max"), area_m2=slots.get("area_m2"),
         selected_index=selected_index, wants_product_details=wants_details,
+        product_mentions=product_mentions,
     )
     if expected_question and (slot := expected_question.get("slot")) in IntentResult.model_fields:
         normalized = re.sub(r"\s+", " ", low).strip()
@@ -207,6 +234,10 @@ def _mock_phrase(kind: str, context: dict) -> str:
     if kind == "policy_no_info":
         return ("Dạ phần này em chưa tìm thấy trong chính sách hiện có của bên em ạ.\n\n"
                 "Anh/chị vui lòng liên hệ tổng đài 1800.1060 để được hỗ trợ chính xác nhất nhé ạ.")
+    if kind == "off_topic":
+        return ("Dạ em là nhân viên tư vấn điện máy của Điện Máy Xanh nên phần này em chưa hỗ trợ được ạ.\n\n"
+                "Em chỉ tư vấn các sản phẩm điện máy (máy lạnh, tủ lạnh, tivi, máy giặt...). "
+                "Anh/chị đang cần tìm sản phẩm điện máy nào để em hỗ trợ ngay ạ?")
     return "Dạ em là trợ lý tư vấn điện máy của Điện Máy Xanh, mình cần tư vấn sản phẩm nào em hỗ trợ liền ạ!"
 
 
@@ -249,3 +280,94 @@ async def stream_phrase(kind: str, context: dict) -> AsyncIterator[str]:
         except Exception:
             if started or attempt == 2:  # đã stream dở -> không retry (tránh lặp text)
                 raise
+
+
+# ---------------- enrichment: trích thông số web + tool-calling agent ----------------
+
+WEBSPEC_SYSTEM = """Bạn trích thông số kỹ thuật của MỘT sản phẩm điện máy từ các đoạn web.
+Chỉ dùng thông tin trong đoạn web được cung cấp, KHÔNG bịa. Field không rõ -> để null/rỗng.
+- budget_max: giá tham khảo (VND, số nguyên).
+- area_m2: diện tích phòng phù hợp (suy từ công suất HP nếu có, 1HP≈12m²).
+- brand: hãng. needs_heating: true nếu là máy 2 chiều (có sưởi).
+- category: chuẩn hoá về mã kho nếu suy được (may_lanh, tu_lanh, may_giat).
+- key_specs: tóm tắt các thông số chính dạng văn bản ngắn. summary: 1-2 câu cho khách."""
+
+ENRICH_AGENT_SYSTEM = """Bạn là trợ lý tư vấn Điện Máy Xanh xử lý trường hợp khách hỏi một sản phẩm
+KHÔNG có sẵn trong kho. Nhiệm vụ: dùng tool để (1) hiểu thông số sản phẩm khách hỏi, (2) đối chiếu
+với NHU CẦU của khách, (3) tra lại kho xem có đúng sản phẩm đó không, (4) nếu không có, lọc ra các
+mẫu TƯƠNG ĐƯƠNG hợp nhu cầu nhất trong kho.
+
+Quy trình: nếu thông số web chưa đủ để chốt so với nhu cầu, hãy web_search thêm theo nhu cầu để tìm
+mẫu phù hợp; sau đó search_catalog theo tên mẫu, rồi filter_catalog theo category + tiêu chí để lấy
+mẫu tương đương. Gọi tool tối đa {max_iters} vòng rồi CHỐT. Khi đã có đủ dữ liệu, KHÔNG gọi thêm tool.
+
+Câu trả lời CUỐI (giọng nhân viên Điện Máy Xanh, gọi khách "anh/chị", xưng "em", ngắn gọn):
+- Nếu web cho thấy sản phẩm KHÔNG TỒN TẠI (vd "iPhone 9" — Apple không ra mẫu này): nói thẳng, lịch sự
+  rằng sản phẩm này không có/không tồn tại theo thông tin em tra được, KHÔNG bịa thông số.
+- Nếu sản phẩm CÓ THẬT nhưng KHÔNG thuộc mặt hàng bên em kinh doanh (điện máy: máy lạnh, tủ lạnh,
+  máy giặt...): nói rõ bên em chưa kinh doanh mặt hàng đó, gợi ý khách hỏi đúng ngành hàng em có.
+- Nếu có mẫu tương đương trong kho: giới thiệu ngắn gọn, KHÔNG bịa số liệu ngoài dữ liệu tool trả về.
+TUYỆT ĐỐI không dùng câu "nới lỏng bộ lọc/ngân sách" khi sản phẩm không tồn tại hoặc ngoài ngành hàng."""
+
+
+async def extract_web_specs(product_name: str, results: list[dict]) -> dict:
+    """LLM trích thông số 1 sản phẩm từ kết quả web -> payload dict (kèm catalog_slots).
+
+    Dùng method='function_calling' cho tương thích rộng với provider OpenAI-compatible.
+    Provider trả structured lỗi -> fallback heuristic để lỗi web không làm sập cả lượt chat.
+    """
+    from .tools import _mock_extract_specs  # heuristic fallback dùng chung
+
+    blob = "\n\n".join(f"[{r.get('title','')}] {r.get('content','')}" for r in results)
+    user = f"Sản phẩm khách hỏi: {product_name}\n\nCÁC ĐOẠN WEB:\n{blob or '(không có kết quả)'}"
+    try:
+        llm = _get_llm(LLM_MODEL_LARGE, 0.0).with_structured_output(WebSpec, method="function_calling")
+        spec: WebSpec = await llm.ainvoke(
+            [("system", WEBSPEC_SYSTEM), ("user", user)], config=lf_config("web_specs")
+        )
+        spec.product_name = spec.product_name or product_name
+        return spec.to_payload()
+    except Exception:
+        return _mock_extract_specs(product_name, results)
+
+
+async def run_tool_agent(user_input: str, on_tool=None, max_iters: int = MAX_ENRICH_ITERS) -> dict:
+    """Vòng lặp tool-calling THẬT (bind_tools), giới hạn max_iters vòng.
+
+    on_tool(phase, name, payload) được gọi khi start/end mỗi tool để node stream sự kiện ra FE.
+    Trả {final_text, tool_results: {name: [result,...]}}. Chỉ dùng khi KHÔNG mock.
+    """
+    from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+
+    from . import tools
+
+    model = _get_llm(LLM_MODEL_LARGE, 0.2).bind_tools(tools.TOOL_SCHEMAS)
+    system = ENRICH_AGENT_SYSTEM.format(max_iters=max_iters)
+    msgs: list = [SystemMessage(system), HumanMessage(user_input)]
+    collected: dict[str, list] = {}
+    cfg = lf_config("enrich_agent")
+    for _ in range(max_iters + 1):
+        ai = await model.ainvoke(msgs, config=cfg)
+        msgs.append(ai)
+        tool_calls = getattr(ai, "tool_calls", None) or []
+        if not tool_calls:
+            return {"final_text": ai.content, "tool_results": collected}
+        for tc in tool_calls:
+            name, args = tc["name"], tc.get("args", {})
+            if on_tool:
+                on_tool("start", name, args)
+            try:
+                result = await tools.TOOL_FUNCS[name](args)
+            except Exception as exc:  # tool lỗi -> báo cho model, không sập vòng
+                result = {"error": str(exc)}
+            collected.setdefault(name, []).append(result)
+            if on_tool:
+                on_tool("end", name, result)
+            msgs.append(ToolMessage(content=tools.dumps(result), tool_call_id=tc["id"]))
+    # cạn iters -> ép chốt, cấm gọi thêm tool
+    from langchain_core.messages import HumanMessage as _HM
+
+    final = await _get_llm(LLM_MODEL_LARGE, 0.2).ainvoke(
+        msgs + [_HM("Hết lượt tra cứu. Hãy chốt câu trả lời, không gọi thêm tool.")], config=cfg
+    )
+    return {"final_text": final.content, "tool_results": collected}

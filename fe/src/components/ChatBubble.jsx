@@ -5,6 +5,7 @@ import {
   formatVnd,
   streamChat,
   streamGuestChat,
+  DEBUG_UI,
 } from '../lib/chatApi'
 
 function initialMessages() {
@@ -102,6 +103,27 @@ export default function ChatBubble() {
     }
   }, [messages, typing])
 
+  // đóng/mở bảng "đang suy nghĩ" của từng tin bot
+  const toggleActivity = (botId) =>
+    patchBot(botId, (msg) => ({ activityOpen: !msg.activityOpen }))
+
+  // nối 1 bước hành động (note / tool đang chạy) vào bong bóng bot
+  const pushStep = (botId, step) =>
+    patchBot(botId, (msg) => ({ actions: [...(msg.actions || []), step] }))
+
+  // đánh dấu tool gần nhất cùng tên là xong + gắn count
+  const finishTool = (botId, tool, count) =>
+    patchBot(botId, (msg) => {
+      const actions = [...(msg.actions || [])]
+      for (let i = actions.length - 1; i >= 0; i--) {
+        if (actions[i].kind === 'tool' && actions[i].tool === tool && actions[i].status === 'running') {
+          actions[i] = { ...actions[i], status: 'done', count }
+          break
+        }
+      }
+      return { actions }
+    })
+
   // cập nhật 1 phần của bong bóng bot đang stream
   const patchBot = (botId, patch) => {
     setMessages((m) =>
@@ -144,7 +166,8 @@ export default function ChatBubble() {
     setMessages((m) => [
       ...m,
       { id: userMessageId, from: 'user', segments: [text] },
-      { id: botId, from: 'bot', segments: [''], funnel: null, products: null, reason: null },
+      { id: botId, from: 'bot', segments: [''], funnel: null, products: null, reason: null,
+        actions: [], activityOpen: false },
     ])
     setInput('')
     setTyping(true)
@@ -179,6 +202,8 @@ export default function ChatBubble() {
         onQuestion: (q) => patchBot(botId, { reason: q.reason }),
         onText: (chunk) => appendBotText(botId, chunk),
         onProducts: (products) => patchBot(botId, { products }),
+        onAgentStep: (step) => pushStep(botId, step),
+        onToolDone: ({ tool, count }) => finishTool(botId, tool, count),
         onDone: () => {
           sendingRef.current = false
           setTyping(false)
@@ -220,6 +245,12 @@ export default function ChatBubble() {
     setOpen((current) => !current)
   }
 
+  // tin bot đang stream = tin cuối khi đang chờ trả lời
+  const activeBotId = typing ? messages[messages.length - 1]?.id : null
+  const activeMsg = messages.find((m) => m.id === activeBotId)
+  // đã có bảng "đang suy nghĩ" thì bỏ 3 chấm để tránh trùng chỉ báo
+  const hideDots = DEBUG_UI && (activeMsg?.actions?.length || 0) > 0
+
   return (
     <div className="chat-widget">
       {open && (
@@ -252,6 +283,15 @@ export default function ChatBubble() {
           <div className="chat-panel__body" ref={bodyRef}>
             {messages.map((m) => (
               <div key={m.id} className={`chat-msg chat-msg--${m.from}`}>
+                {DEBUG_UI && m.from === 'bot' && (m.actions?.length > 0 || m.id === activeBotId) && (
+                  <AgentActivity
+                    actions={m.actions || []}
+                    open={m.activityOpen}
+                    running={m.id === activeBotId}
+                    onToggle={() => toggleActivity(m.id)}
+                  />
+                )}
+
                 {m.funnel && (
                   <div className="chat-funnel">
                     🔎 Còn <b>{m.funnel.count}</b>/{m.funnel.total} mẫu khớp
@@ -280,7 +320,7 @@ export default function ChatBubble() {
               </div>
             ))}
 
-            {typing && (
+            {typing && !hideDots && (
               <div className="chat-bubble chat-bubble--bot chat-bubble--typing">
                 <span />
                 <span />
@@ -314,6 +354,54 @@ export default function ChatBubble() {
         <span className="chat-fab__icon">{open ? '✕' : '💬'}</span>
         {!open && <span className="chat-fab__badge">BETA</span>}
       </button>
+    </div>
+  )
+}
+
+// Bảng hành động của Agent ("đang suy nghĩ" -> click xổ chi tiết tool calling).
+function AgentActivity({ actions, open, running, onToggle }) {
+  const toolCount = actions.filter((a) => a.kind === 'tool').length
+  const label = running
+    ? 'Đang suy nghĩ…'
+    : toolCount > 0
+      ? `Đã dùng ${toolCount} công cụ`
+      : 'Chi tiết xử lý'
+  return (
+    <div className={`agent-activity${running ? ' agent-activity--running' : ''}`}>
+      <button className="agent-activity__head" onClick={onToggle} aria-expanded={open}>
+        <span className="agent-activity__spark">{running ? '🧠' : '🛠️'}</span>
+        <span className="agent-activity__label">{label}</span>
+        <span className="agent-activity__chevron">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <ul className="agent-activity__list">
+          {actions.length === 0 && <li className="agent-activity__step">Đang khởi tạo…</li>}
+          {actions.map((a, i) =>
+            a.kind === 'tool' ? (
+              <li key={i} className={`agent-activity__step agent-activity__step--${a.status}`}>
+                <span className="agent-activity__ico">
+                  {a.status === 'done' ? '✅' : '⏳'}
+                </span>
+                <span className="agent-activity__txt">
+                  {a.label || a.tool}
+                  {a.status === 'done' && a.count != null && (
+                    <em className="agent-activity__count"> · {a.count} kết quả</em>
+                  )}
+                </span>
+                <code className="agent-activity__tool">{a.tool}</code>
+              </li>
+            ) : (
+              <li key={i} className="agent-activity__step agent-activity__step--note">
+                <span className="agent-activity__ico">💬</span>
+                <span className="agent-activity__txt">
+                  {a.text}
+                  {a.detail && <em className="agent-activity__detail">{a.detail}</em>}
+                </span>
+              </li>
+            ),
+          )}
+        </ul>
+      )}
     </div>
   )
 }

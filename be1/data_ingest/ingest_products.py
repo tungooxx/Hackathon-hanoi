@@ -688,9 +688,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--recreate-index",
-        action=argparse.BooleanOptionalAction,
+        dest="recreate_index",
+        action="store_true",
         default=False,
         help="Delete and recreate the target index before ingestion",
+    )
+    parser.add_argument(
+        "--no-recreate-index",
+        dest="recreate_index",
+        action="store_false",
+        help="Do not recreate the target index before ingestion",
     )
     parser.add_argument(
         "--dry-run",

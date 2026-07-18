@@ -49,6 +49,11 @@ export function streamGuestChat({ message, signal, handlers }) {
   })
 }
 
+// Bảng "đang suy nghĩ" (tool calling của Agent) hiển thị để debug.
+// Mặc định (.env KHÔNG có VITE_DEBUG) -> hiện. Đặt VITE_DEBUG=False (production) -> ẩn.
+export const DEBUG_UI =
+  String(import.meta.env.VITE_DEBUG ?? 'true').toLowerCase() !== 'false'
+
 /**
  * Gọi BE1 và dispatch từng event qua handlers.
  * @param {object} p
@@ -155,6 +160,25 @@ function dispatch(rawEvent, h) {
     case 'product_cards':
       h.onProducts?.(evt.products)
       break
+    // --- hành động của Agent (bảng "đang suy nghĩ") ---
+    case 'enrich_note':
+      h.onAgentStep?.({ kind: 'note', text: evt.message })
+      break
+    case 'tool_call':
+      h.onAgentStep?.({ kind: 'tool', tool: evt.tool, label: evt.label, status: 'running' })
+      break
+    case 'tool_result':
+      h.onToolDone?.({ tool: evt.tool, count: evt.count })
+      break
+    case 'web_specs': {
+      const s = evt.spec || {}
+      h.onAgentStep?.({
+        kind: 'note',
+        text: `Tra web: ${evt.product}${s.found === false ? ' — không có thông tin' : ''}`,
+        detail: s.summary || null,
+      })
+      break
+    }
     case 'done':
       h.onDone?.(evt.turn_type)
       return true

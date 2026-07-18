@@ -14,7 +14,7 @@ from db.elasticsearch import elasticsearch
 
 # chỉ lấy field cần cho normalize -> bỏ search_text/promotion/... (payload nhẹ hơn nhiều)
 _SOURCE = [
-    "product_id", "product_code", "product_name", "brand",
+    "product_id", "product_code", "product_name", "brand", "category_name",
     "original_price", "sale_price", "specs", "warranty_policy",
 ]
 
@@ -147,3 +147,34 @@ async def get_products(category: str) -> list[dict]:
     resp = await elasticsearch.search(body)
     hits = resp.get("hits", {}).get("hits", [])
     return [_normalize(h.get("_source", {}), category) for h in hits]
+
+
+async def search_products(query: str, category: str | None = None, size: int = 10) -> list[dict]:
+    """Tra sản phẩm theo tên/mã (dùng cho tool search_catalog khi khách nêu SP cụ thể).
+
+    Khác get_products: full-text trên product_name/product_code (có fuzziness cho sai chính tả),
+    tùy chọn giới hạn theo category. Trả về list dict đã normalize (rỗng nếu không khớp).
+    """
+    if not (query or "").strip():
+        return []
+    # cross_fields + operator AND: MỌI token (kể cả mã model) phải xuất hiện ở đâu đó ->
+    # tên/mã lạ hoàn toàn sẽ trả 0 hit (điều kiện để rẽ sang nhánh làm giàu từ web),
+    # trong khi mã đúng (dù brand nằm ở field brand, model ở product_name) vẫn khớp.
+    must: list[dict] = [{
+        "multi_match": {
+            "query": query,
+            "type": "cross_fields",
+            "fields": ["product_name", "product_code", "brand"],
+            "operator": "and",
+        }
+    }]
+    if category:
+        must.append({"term": {"category_name.raw": category}})
+    body = {"size": size, "_source": _SOURCE, "query": {"bool": {"must": must}}}
+    resp = await elasticsearch.search(body)
+    hits = resp.get("hits", {}).get("hits", [])
+    out = []
+    for h in hits:
+        src = h.get("_source", {})
+        out.append(_normalize(src, src.get("category_name") or category or ""))
+    return out
