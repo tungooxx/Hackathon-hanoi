@@ -37,10 +37,12 @@ For a production build that calls a separate backend origin, set
 
 ## User-owned chat sessions
 
-- Opening chat while signed out redirects to `/login`.
+- Guests can open chat without signing in. Their messages remain visible in
+  the current widget only; each backend turn is stateless and is not saved.
 - The browser creates a conversation with `POST /chat/sessions` before sending
-  its first message.
+  the first message for an authenticated user.
 - Messages stream from `POST /chat/sessions/{id}/messages`.
+- Guest messages stream from `POST /chat/guest/messages` without a session ID.
 - React receives only the server-generated public session UUID. BE1 keeps the
   LangGraph thread ID private and checks the session owner on every request.
 - `src/lib/chatApi.js` also exposes list, read, rename, and delete helpers for a

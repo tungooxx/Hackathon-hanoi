@@ -40,6 +40,15 @@ export function deleteChatSession(chatSessionId) {
   })
 }
 
+export function streamGuestChat({ message, signal, handlers }) {
+  return streamMessage({
+    path: '/chat/guest/messages',
+    message,
+    signal,
+    handlers,
+  })
+}
+
 /**
  * Gọi BE1 và dispatch từng event qua handlers.
  * @param {object} p
@@ -49,18 +58,24 @@ export function deleteChatSession(chatSessionId) {
  * @param {object} p.handlers - { onFunnel, onQuestion, onText, onProducts, onDone, onError }
  */
 export async function streamChat({ chatSessionId, message, signal, handlers }) {
+  return streamMessage({
+    path: `/chat/sessions/${encodeURIComponent(chatSessionId)}/messages`,
+    message,
+    signal,
+    handlers,
+  })
+}
+
+async function streamMessage({ path, message, signal, handlers }) {
   const h = handlers || {}
   let res
   try {
-    res = await apiFetch(
-      `/chat/sessions/${encodeURIComponent(chatSessionId)}/messages`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
-        signal,
-      },
-    )
+    res = await apiFetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+      signal,
+    })
   } catch (e) {
     h.onError?.(e)
     return

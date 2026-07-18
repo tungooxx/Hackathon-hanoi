@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
-import { createChatSession, streamChat, formatVnd } from '../lib/chatApi'
+import {
+  createChatSession,
+  formatVnd,
+  streamChat,
+  streamGuestChat,
+} from '../lib/chatApi'
 
 function initialMessages() {
   return [
@@ -20,8 +24,6 @@ const PANEL_MAX_HEIGHT = 800
 
 export default function ChatBubble() {
   const { user, loading: authLoading } = useAuth()
-  const location = useLocation()
-  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState(initialMessages)
   const [input, setInput] = useState('')
@@ -134,7 +136,7 @@ export default function ChatBubble() {
 
   const send = async () => {
     const text = input.trim()
-    if (!text || sendingRef.current || !user) return
+    if (!text || sendingRef.current || authLoading) return
     sendingRef.current = true
 
     const userMessageId = `u-${++msgSeq.current}`
@@ -148,9 +150,13 @@ export default function ChatBubble() {
     setTyping(true)
 
     try {
+      // Authenticated users receive a durable, owner-checked conversation.
+      // Guests skip session creation and use the stateless endpoint below.
       if (!chatSessionId.current) {
-        const created = await createChatSession()
-        chatSessionId.current = created.id
+        if (user) {
+          const created = await createChatSession()
+          chatSessionId.current = created.id
+        }
       }
     } catch (error) {
       patchBot(botId, {
@@ -165,8 +171,7 @@ export default function ChatBubble() {
     }
 
     abortRef.current = new AbortController()
-    streamChat({
-      chatSessionId: chatSessionId.current,
+    const request = {
       message: text,
       signal: abortRef.current.signal,
       handlers: {
@@ -191,7 +196,15 @@ export default function ChatBubble() {
           setTyping(false)
         },
       },
-    })
+    }
+    if (user) {
+      streamChat({
+        ...request,
+        chatSessionId: chatSessionId.current,
+      })
+    } else {
+      streamGuestChat(request)
+    }
   }
 
   const onKeyDown = (e) => {
@@ -204,11 +217,6 @@ export default function ChatBubble() {
 
   const toggleChat = () => {
     if (authLoading) return
-    if (!user) {
-      const returnTo = `${location.pathname}${location.search}${location.hash}`
-      navigate('/login', { state: { from: returnTo } })
-      return
-    }
     setOpen((current) => !current)
   }
 
@@ -232,7 +240,8 @@ export default function ChatBubble() {
             <div className="chat-panel__title">
               <strong>Trợ lý AI Điện máy XANH</strong>
               <span className="chat-panel__status">
-                <i className="dot" /> Đang hoạt động
+                <i className="dot" />{' '}
+                {user ? 'Lưu theo tài khoản' : 'Khách · Không lưu lịch sử'}
               </span>
             </div>
             <button className="chat-panel__close" onClick={() => setOpen(false)}>
@@ -299,7 +308,7 @@ export default function ChatBubble() {
       <button
         className="chat-fab"
         onClick={toggleChat}
-        aria-label={user ? 'Mở chat' : 'Đăng nhập để chat'}
+        aria-label="Mở chat"
         disabled={authLoading}
       >
         <span className="chat-fab__icon">{open ? '✕' : '💬'}</span>

@@ -1,6 +1,7 @@
 """LangGraph: intent -> retrieve -> (ask | compare) | off_topic.
 
-State persists through the application-owned PostgreSQL checkpointer.
+Authenticated state persists through PostgreSQL; guest turns compile without
+a checkpointer and are intentionally stateless.
 Mọi output đẩy ra FE qua stream_mode="custom"; event type bắt đầu bằng "_"
 là internal (log-only), main.py sẽ không forward cho client.
 """

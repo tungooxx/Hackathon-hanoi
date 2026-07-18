@@ -98,14 +98,15 @@ Expected authentication errors use:
 }
 ```
 
-## User-owned chat API
+## Chat API
 
-All chat endpoints require a valid access-cookie session. The server derives
-ownership exclusively from the JWT `sub`; a request body never accepts
-`user_id` or an internal LangGraph thread ID.
+Persistent chat-session endpoints require a valid access-cookie session. The
+server derives ownership exclusively from the JWT `sub`; a request body never
+accepts `user_id` or an internal LangGraph thread ID.
 
 | Endpoint | Purpose |
 |---|---|
+| `POST /chat/guest/messages` | Run one stateless guest turn without authentication |
 | `POST /chat/sessions` | Create a server-owned conversation |
 | `GET /chat/sessions` | List only the current user's conversations |
 | `GET /chat/sessions/{id}` | Read owned conversation metadata |
@@ -130,6 +131,11 @@ server-side and persists conversation state across restarts.
 
 The old unauthenticated `POST /chat` endpoint and browser-generated
 `session_id` contract have been removed.
+
+Guest turns use the same message body and SSE events, but every request is
+independent. BE1 does not create a `chat_sessions` row, LangGraph checkpoint,
+thread ID, or `logs/turns.jsonl` record for a guest. The browser can display
+messages until reload, but the server does not remember earlier guest turns.
 
 ## Hợp đồng với BE2 (Kiên)
 

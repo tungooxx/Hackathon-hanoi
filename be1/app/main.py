@@ -9,7 +9,7 @@ from db import elasticsearch, postgres
 from .auth.handlers import install_auth_exception_handlers
 from .auth.router import router as auth_router
 from .chat.handlers import install_chat_exception_handlers
-from .chat.router import router as chat_router
+from .chat.router import guest_router, router as chat_router
 from .chat.runtime import chat_graph_runtime
 from .config import FRONTEND_ORIGINS, validate_auth_config
 
@@ -36,6 +36,7 @@ install_auth_exception_handlers(app)
 install_chat_exception_handlers(app)
 app.include_router(auth_router)
 app.include_router(chat_router)
+app.include_router(guest_router)
 
 
 @app.get("/health")

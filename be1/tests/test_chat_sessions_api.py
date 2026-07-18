@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import httpx
 from dotenv import dotenv_values
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -25,6 +26,7 @@ from app.chat.dependencies import (
 from app.chat.service import ChatSessionService
 from app.main import app
 from db import get_db_session
+from db.models import ChatSession
 
 BE1_ROOT = Path(__file__).resolve().parent.parent
 PASSWORD = "correct-password-123"
@@ -54,6 +56,7 @@ class FakeChatRuntime:
     def __init__(self) -> None:
         self.deleted_threads: list[str] = []
         self.stream_calls: list[tuple[str, str]] = []
+        self.guest_stream_calls: list[str] = []
 
     async def delete_thread(self, thread_id: str) -> None:
         self.deleted_threads.append(thread_id)
@@ -65,6 +68,15 @@ class FakeChatRuntime:
         message: str,
     ) -> AsyncIterator[dict]:
         self.stream_calls.append((thread_id, message))
+        yield {"type": "text_chunk", "content": "Đã nhận"}
+        yield {"type": "done", "turn_type": "off_topic"}
+
+    async def stream_guest(
+        self,
+        *,
+        message: str,
+    ) -> AsyncIterator[dict]:
+        self.guest_stream_calls.append(message)
         yield {"type": "text_chunk", "content": "Đã nhận"}
         yield {"type": "done", "turn_type": "off_topic"}
 
@@ -184,6 +196,45 @@ class ChatSessionApiTests(unittest.IsolatedAsyncioTestCase):
             (await self.owner.get(f"/chat/sessions/{session_id}")).status_code,
             404,
         )
+
+    async def test_guest_chat_is_stateless_and_creates_no_session(self) -> None:
+        async with self.session.begin():
+            before = await self.session.scalar(
+                select(func.count(ChatSession.id))
+            )
+
+        first = await self.anonymous.post(
+            "/chat/guest/messages",
+            json={"message": "Tư vấn máy lạnh"},
+        )
+        second = await self.anonymous.post(
+            "/chat/guest/messages",
+            json={"message": "Ngân sách 10 triệu"},
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertIn('"type": "done"', first.text)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(
+            self.runtime.guest_stream_calls,
+            ["Tư vấn máy lạnh", "Ngân sách 10 triệu"],
+        )
+        self.assertEqual(self.runtime.stream_calls, [])
+
+        async with self.session.begin():
+            after = await self.session.scalar(
+                select(func.count(ChatSession.id))
+            )
+        self.assertEqual(after, before)
+
+        forged = await self.anonymous.post(
+            "/chat/guest/messages",
+            json={
+                "message": "Không được nhận ID từ client",
+                "session_id": "forged",
+            },
+        )
+        self.assertEqual(forged.status_code, 422)
 
     async def test_every_operation_enforces_cross_user_ownership(self) -> None:
         await self._register(self.owner, self.owner_phone)

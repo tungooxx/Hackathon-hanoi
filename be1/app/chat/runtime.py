@@ -28,6 +28,7 @@ class ChatGraphRuntime:
         self._pool: AsyncConnectionPool | None = None
         self._checkpointer: AsyncPostgresSaver | None = None
         self._graph: Any | None = None
+        self._guest_graph: Any | None = None
         self._lifecycle_lock = asyncio.Lock()
 
     @property
@@ -63,18 +64,21 @@ class ChatGraphRuntime:
                 )
                 await checkpointer.setup()
                 graph = build_graph(checkpointer=checkpointer)
+                guest_graph = build_graph(checkpointer=None)
             except Exception:
                 await pool.close()
                 raise
             self._pool = pool
             self._checkpointer = checkpointer
             self._graph = graph
+            self._guest_graph = guest_graph
         return self
 
     async def close(self) -> None:
         async with self._lifecycle_lock:
             pool = self._pool
             self._graph = None
+            self._guest_graph = None
             self._checkpointer = None
             self._pool = None
             if pool is not None:
@@ -91,6 +95,22 @@ class ChatGraphRuntime:
         async for payload in graph.astream(
             {"user_input": message},
             config,
+            stream_mode="custom",
+        ):
+            yield payload
+
+    async def stream_guest(
+        self,
+        *,
+        message: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Run one stateless turn without a session or checkpoint."""
+
+        graph = self._guest_graph
+        if graph is None:
+            raise ChatRuntimeUnavailable("Guest chat graph is not running")
+        async for payload in graph.astream(
+            {"user_input": message},
             stream_mode="custom",
         ):
             yield payload

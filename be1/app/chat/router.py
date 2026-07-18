@@ -29,6 +29,7 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat/sessions", tags=["Chat sessions"])
+guest_router = APIRouter(prefix="/chat/guest", tags=["Guest chat"])
 
 CHAT_ERROR_RESPONSES = {
     401: {"model": ApiErrorResponse, "description": "Authentication required"},
@@ -36,6 +37,37 @@ CHAT_ERROR_RESPONSES = {
     422: {"model": ApiErrorResponse, "description": "Invalid request"},
     503: {"model": ApiErrorResponse, "description": "Chat runtime unavailable"},
 }
+GUEST_CHAT_ERROR_RESPONSES = {
+    422: {"model": ApiErrorResponse, "description": "Invalid request"},
+    503: {"model": ApiErrorResponse, "description": "Chat runtime unavailable"},
+}
+
+
+@guest_router.post(
+    "/messages",
+    responses=GUEST_CHAT_ERROR_RESPONSES,
+)
+async def stream_guest_chat_message(
+    payload: ChatMessageRequest,
+    runtime: ChatGraphRuntimeDependency,
+) -> EventSourceResponse:
+    """Stream one independent turn without storing session metadata or state."""
+
+    async def generate():
+        try:
+            async for event_payload in runtime.stream_guest(
+                message=payload.message,
+            ):
+                if not event_payload["type"].startswith("_"):
+                    yield _sse_event(event_payload)
+        except Exception:
+            logger.exception("Guest chat graph failed")
+            yield _error_event()
+
+    return EventSourceResponse(
+        generate(),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post(
@@ -151,28 +183,13 @@ async def stream_chat_message(
             ):
                 events.append(event_payload)
                 if not event_payload["type"].startswith("_"):
-                    yield {
-                        "event": event_payload["type"],
-                        "data": json.dumps(
-                            event_payload,
-                            ensure_ascii=False,
-                        ),
-                    }
+                    yield _sse_event(event_payload)
         except Exception:
             logger.exception(
                 "Chat graph failed for session %s",
                 public_session_id,
             )
-            yield {
-                "event": "error",
-                "data": json.dumps(
-                    {
-                        "type": "error",
-                        "message": "Trợ lý đang tạm thời gián đoạn.",
-                    },
-                    ensure_ascii=False,
-                ),
-            }
+            yield _error_event()
         finally:
             log_turn(public_session_id, payload.message, events)
 
@@ -185,4 +202,20 @@ def _response(chat_session: ChatSession) -> ChatSessionResponse:
         title=chat_session.title,
         created_at=chat_session.created_at,
         updated_at=chat_session.updated_at,
+    )
+
+
+def _sse_event(payload: dict) -> dict[str, str]:
+    return {
+        "event": payload["type"],
+        "data": json.dumps(payload, ensure_ascii=False),
+    }
+
+
+def _error_event() -> dict[str, str]:
+    return _sse_event(
+        {
+            "type": "error",
+            "message": "Trợ lý đang tạm thời gián đoạn.",
+        }
     )
