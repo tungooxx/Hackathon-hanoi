@@ -1,7 +1,9 @@
+import asyncio
 from pathlib import Path
 from hashlib import sha256
 import re
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -54,7 +56,11 @@ def test_unmapped_catalog_uses_decision_gap_fallback() -> None:
         {"sku": "b", "price_sale": 300_000, "attributes": {"Loại bàn ủi": "Bàn ủi hơi nước"}},
         {"sku": "c", "price_sale": 450_000, "attributes": {"Loại bàn ủi": "Bàn ủi hơi nước"}},
     ]
-    schema = ontology._catalog_fallback_schema("Bàn ủi", products)
+    with (
+        patch("app.profile_compiler.get_cached_profile", return_value=None),
+        patch("app.profile_compiler.compile_profile", side_effect=AssertionError("must not compile on chat path")),
+    ):
+        schema = asyncio.run(ontology.get_runtime_slot_schema("Bàn ủi", products))
 
     assert any(item.maps_to_field == "price_sale" for item in schema)
     question = choose_next_question("Bàn ủi", {}, [], products, [], schema)

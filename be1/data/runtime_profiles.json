@@ -23,25 +23,6 @@
         "boolean_false_values": []
       },
       {
-        "slot": "CTX_INSTALL_SPACE",
-        "question": "Kích thước tối đa (chiều rộng, chiều cao, chiều sâu) của khu vực lắp đặt (cm) là bao nhiêu?",
-        "question_type": "numeric",
-        "possible_answers": [
-          "Chiều rộng, chiều cao, chiều sâu (cm)"
-        ],
-        "answer_values": {},
-        "field": "Kích thước - Khối lượng sản phẩm",
-        "operation": "max",
-        "ordered_values": [],
-        "unit": "cm",
-        "hard_gate": true,
-        "source": "ontology",
-        "customer_effort": 0.4,
-        "requires_technical_knowledge": false,
-        "boolean_true_values": [],
-        "boolean_false_values": []
-      },
-      {
         "slot": "CTX_IRON_VERTICAL_NEED",
         "question": "Bạn có muốn ủi quần áo treo theo chiều dọc không?",
         "question_type": "boolean",
@@ -353,7 +334,7 @@
         ],
         "answer_values": {},
         "field": "Chiều cao lắp đặt tối đa giữa cục nóng-lạnh",
-        "operation": "range",
+        "operation": "min",
         "ordered_values": [],
         "unit": "m",
         "hard_gate": true,
@@ -433,7 +414,7 @@
         ],
         "answer_values": {},
         "field": "Chiều dài lắp đặt ống đồng",
-        "operation": "range",
+        "operation": "min",
         "ordered_values": [],
         "unit": "m",
         "hard_gate": true,

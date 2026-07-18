@@ -301,9 +301,12 @@ class AdaptiveOntologyEngine:
             # force-regeneration produce new IDs. This registry is a runtime
             # cache, not a version archive: retain only the newest profile for
             # each canonical category to prevent unbounded growth.
-            category_key = profile.normalized_category
+            category_key = normalize_text(profile.normalized_category)
             for stored_id, stored_profile in list(registry.items()):
-                if stored_profile.get("normalized_category") == category_key:
+                stored_category_key = normalize_text(
+                    str(stored_profile.get("normalized_category") or stored_profile.get("category") or "")
+                )
+                if stored_category_key == category_key:
                     registry.pop(stored_id)
             registry[profile.profile_id] = profile.model_dump(mode="json")
             temporary = self.registry_path.with_suffix(f"{self.registry_path.suffix}.{os.getpid()}.tmp")

@@ -125,14 +125,16 @@ async def get_runtime_slot_schema(category: str, products: list[dict[str, Any]])
     whether any candidate is worth asking. Runtime-profile compilation remains
     for categories without reviewed seed questions and should be prewarmed.
     """
-    from .profile_compiler import compile_profile
+    from .profile_compiler import get_cached_profile
 
     attributes = {key for product in products for key in product.get("attributes", {})}
     standard_fields = {"price_sale", "price_original"}
     available_fields = attributes | standard_fields
     if not attributes and not any(product.get("price_sale") for product in products):
         return []
-    profile = await compile_profile(category, questions_for_category(category), products)
+    profile = get_cached_profile(category, products)
+    if profile is None:
+        return _catalog_fallback_schema(category, products)
     result: list[SlotDef] = []
     for question in profile.questions:
         if question.field not in available_fields:

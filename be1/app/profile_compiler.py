@@ -145,6 +145,37 @@ def _validate_questions(
     return valid, errors
 
 
+def get_cached_profile(category: str, products: list[dict]) -> RuntimeProfile | None:
+    """Return a validated cache hit without invoking the profile compiler."""
+    fingerprint = _fingerprint(category, products)
+    fields = sorted({key for product in products for key in product.get("attributes", {})})
+    standard_fields = ["price_sale", "price_original"]
+    values = {
+        field: sorted({str(product.get("attributes", {}).get(field)) for product in products
+                       if product.get("attributes", {}).get(field) not in (None, "")})[:20]
+        for field in fields
+    }
+    values.update({
+        field: sorted({str(product.get(field)) for product in products if product.get(field) is not None})[:20]
+        for field in standard_fields
+    })
+    cached = _load_cache().get(category)
+    if not cached or cached.get("catalog_fingerprint") != fingerprint:
+        return None
+    try:
+        cached_profile = RuntimeProfile.model_validate(cached)
+        cached_valid, cached_errors = _validate_questions(
+            cached_profile.questions, set([*fields, *standard_fields]), values
+        )
+    except (ValidationError, TypeError, ValueError) as error:
+        logger.warning("Rejected runtime profile cache for %r: %s", category, error)
+        return None
+    if cached_errors or len(cached_valid) != len(cached_profile.questions):
+        logger.warning("Rejected runtime profile cache for %r: %s", category, cached_errors)
+        return None
+    return cached_profile.model_copy(update={"questions": cached_valid})
+
+
 async def compile_profile(category: str, ontology_questions: list[dict], products: list[dict]) -> RuntimeProfile:
     """Create or reuse a profile from ontology questions and actual catalog evidence."""
     fingerprint = _fingerprint(category, products)
@@ -161,24 +192,8 @@ async def compile_profile(category: str, ontology_questions: list[dict], product
         for field in standard_fields
     })
 
-    # A fingerprint match alone is insufficient: a profile written by an older
-    # compiler can deserialize with new default fields yet no longer be safely
-    # executable.  Validate cached mappings against this catalog before reuse.
-    cache = _load_cache()
-    cached = cache.get(category)
-    if cached and cached.get("catalog_fingerprint") == fingerprint:
-        try:
-            cached_profile = RuntimeProfile.model_validate(cached)
-            cached_valid, cached_errors = _validate_questions(
-                cached_profile.questions, set([*fields, *standard_fields]), values
-            )
-            if not cached_errors and len(cached_valid) == len(cached_profile.questions):
-                return cached_profile.model_copy(update={"questions": cached_valid})
-            logger.warning("Rejected runtime profile cache for %r: %s", category, cached_errors)
-        except (ValidationError, TypeError, ValueError) as error:
-            # Regenerate rather than treating a malformed cache entry as a
-            # catalog or ontology failure.
-            logger.warning("Rejected runtime profile cache for %r: %s", category, error)
+    if cached_profile := get_cached_profile(category, products):
+        return cached_profile
 
     from langchain_openai import ChatOpenAI
     # The adaptive ontology determines which broad decision modules have
