@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import Header from './components/Header'
 import Carousel from './components/Carousel'
 import QuickCategoryGrid from './components/QuickCategoryGrid'
@@ -7,12 +7,20 @@ import ChatBubble from './components/ChatBubble'
 import LoginPopup from './components/LoginPopup'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
+import ProductResults from './pages/ProductResults'
 import labelLeft from './assets/label-left.png'
 import mascot from './assets/mascot-left.png'
 import ball from './assets/ball-right.png'
 import './App.css'
 
 function HomePage() {
+  const [searchParams] = useSearchParams()
+  // Khách bấm "Còn N/M mẫu khớp" -> URL có ?category=... -> render danh sách
+  // sản phẩm lọc ngay trên trang chính. Xoá param (hoặc "Về trang chủ") -> trang chính.
+  if (searchParams.get('category')) {
+    return <ProductResults />
+  }
+
   return (
     <>
       <div className="stage">

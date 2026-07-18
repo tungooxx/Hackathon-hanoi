@@ -149,7 +149,12 @@ function dispatch(rawEvent, h) {
 
   switch (evt.type) {
     case 'funnel_count':
-      h.onFunnel?.({ count: evt.count, total: evt.total, filters: evt.filters })
+      h.onFunnel?.({
+        count: evt.count,
+        total: evt.total,
+        filters: evt.filters,
+        category: evt.category,
+      })
       break
     case 'question':
       h.onQuestion?.({ slot: evt.slot, reason: evt.reason })

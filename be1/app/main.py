@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from db import elasticsearch, postgres, qdrant
 
 from .adaptive_api import router as adaptive_router
+from .catalog import router as catalog_router
 from .auth.handlers import install_auth_exception_handlers
 from .auth.router import router as auth_router
 from .chat.handlers import install_chat_exception_handlers
@@ -39,6 +40,7 @@ app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(guest_router)
 app.include_router(adaptive_router)
+app.include_router(catalog_router)
 
 
 @app.get("/health")

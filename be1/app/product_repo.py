@@ -16,6 +16,7 @@ from db.elasticsearch import elasticsearch
 _SOURCE = [
     "product_id", "product_code", "product_name", "brand", "category_name",
     "original_price", "sale_price", "specs", "warranty_policy",
+    "image_url", "url",
 ]
 
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
@@ -123,6 +124,8 @@ def _normalize(src: dict, category: str) -> dict:
         "name": name,
         "brand": src.get("brand", ""),
         "category": category,
+        "image_url": src.get("image_url") or None,
+        "url": src.get("url") or None,
         "price_original": _f(src.get("original_price")),
         "price_sale": _f(src.get("sale_price")),
         "area_min_m2": area_min,

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
 import {
   createChatSession,
@@ -7,6 +8,7 @@ import {
   streamGuestChat,
   DEBUG_UI,
 } from '../lib/chatApi'
+import { funnelToSearchParams } from '../lib/catalogApi'
 
 function initialMessages() {
   return [
@@ -25,6 +27,7 @@ const PANEL_MAX_HEIGHT = 800
 
 export default function ChatBubble() {
   const { user, loading: authLoading } = useAuth()
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState(initialMessages)
   const [input, setInput] = useState('')
@@ -245,6 +248,15 @@ export default function ChatBubble() {
     setOpen((current) => !current)
   }
 
+  // Bấm "Còn N/M mẫu khớp" -> render danh sách sản phẩm lọc trên trang chính.
+  // Điều hướng client-side (react-router) nên ChatBubble không unmount -> giữ nguyên
+  // phiên chat, tin nhắn và session id hiện tại.
+  const showMatches = (funnel) => {
+    const params = funnelToSearchParams(funnel)
+    if (!params.get('category')) return
+    navigate({ pathname: '/', search: `?${params.toString()}` })
+  }
+
   // tin bot đang stream = tin cuối khi đang chờ trả lời
   const activeBotId = typing ? messages[messages.length - 1]?.id : null
   const activeMsg = messages.find((m) => m.id === activeBotId)
@@ -292,17 +304,34 @@ export default function ChatBubble() {
                   />
                 )}
 
-                {m.funnel && (
-                  <div className="chat-funnel">
-                    🔎 Còn <b>{m.funnel.count}</b>/{m.funnel.total} mẫu khớp
-                    {m.funnel.filters && Object.keys(m.funnel.filters).length > 0 && (
-                      <span className="chat-funnel__filters">
-                        {' '}
-                        · {describeFilters(m.funnel.filters)}
-                      </span>
-                    )}
-                  </div>
-                )}
+                {m.funnel &&
+                  (m.funnel.category && m.funnel.count > 0 ? (
+                    <button
+                      type="button"
+                      className="chat-funnel chat-funnel--clickable"
+                      onClick={() => showMatches(m.funnel)}
+                      title="Xem tất cả sản phẩm khớp trên trang chính"
+                    >
+                      🔎 Còn <b>{m.funnel.count}</b>/{m.funnel.total} mẫu khớp
+                      {m.funnel.filters && Object.keys(m.funnel.filters).length > 0 && (
+                        <span className="chat-funnel__filters">
+                          {' '}
+                          · {describeFilters(m.funnel.filters)}
+                        </span>
+                      )}
+                      <span className="chat-funnel__cta">Xem tất cả →</span>
+                    </button>
+                  ) : (
+                    <div className="chat-funnel">
+                      🔎 Còn <b>{m.funnel.count}</b>/{m.funnel.total} mẫu khớp
+                      {m.funnel.filters && Object.keys(m.funnel.filters).length > 0 && (
+                        <span className="chat-funnel__filters">
+                          {' '}
+                          · {describeFilters(m.funnel.filters)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
 
                 {m.segments.filter(Boolean).map((seg, i) => (
                   <div key={i} className={`chat-bubble chat-bubble--${m.from}`}>
@@ -413,6 +442,9 @@ function ProductCard({ p }) {
       : null
   return (
     <div className="chat-card">
+      {p.image_url && (
+        <img className="chat-card__img" src={p.image_url} alt={p.name} loading="lazy" />
+      )}
       <div className="chat-card__name">{p.name}</div>
       <div className="chat-card__price">
         {formatVnd(p.price_sale)}

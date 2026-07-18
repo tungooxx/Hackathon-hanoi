@@ -107,7 +107,7 @@ async def retrieve_node(state: AgentState) -> dict:
     candidates = apply_hard_filters(products, state["slots"])
     w({"type": "_stage", "stage": "retrieve", "ms": round((time.perf_counter() - t0) * 1000)})
     w({"type": "funnel_count", "count": len(candidates), "total": len(products),
-       "filters": state["slots"]})
+       "filters": state["slots"], "category": state["category"]})
     return {"candidates": candidates, "catalog_products": products, "total_in_category": len(products)}
 
 
