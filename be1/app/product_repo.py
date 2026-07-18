@@ -7,6 +7,7 @@ energy_stars, inverter, brand, ...).
 """
 import re
 import unicodedata
+from difflib import SequenceMatcher
 from typing import Any
 
 from db.elasticsearch import elasticsearch
@@ -35,7 +36,20 @@ async def resolve_category(query_text: str) -> str | None:
     query = _normal(query_text)
     categories = [bucket["key"] for bucket in response.get("aggregations", {}).get("categories", {}).get("buckets", [])]
     matches = [category for category in categories if _normal(category) in query]
-    return max(matches, key=lambda item: len(_normal(item))) if matches else None
+    if matches:
+        return max(matches, key=lambda item: len(_normal(item)))
+    # Conservative typo recovery: require a close full-label match and an
+    # unambiguous winner so generic/off-topic text is never routed as catalog.
+    candidates = []
+    for category in categories:
+        label = _normal(category)
+        score = SequenceMatcher(None, query, label).ratio()
+        if len(query) >= 4 and score >= 0.84:
+            candidates.append((score, category))
+    candidates.sort(reverse=True)
+    if len(candidates) == 1 or candidates and candidates[0][0] - candidates[1][0] >= 0.08:
+        return candidates[0][1] if candidates else None
+    return None
 
 
 def _f(v: Any) -> float | None:
@@ -120,6 +134,7 @@ def _normalize(src: dict, category: str) -> dict:
         "warranty_parts": _spec_find(specs, "bảo hành cục", "bảo hành linh kiện", "bảo hành sản phẩm")
         or src.get("warranty_policy"),
         "utilities": _spec_find(specs, "tiện ích"),
+        "attributes": specs,
     }
 
 

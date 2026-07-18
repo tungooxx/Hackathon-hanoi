@@ -79,7 +79,7 @@ _POLICY_KW = [
 ]
 
 
-def _mock_intent(text: str, category: str | None) -> IntentResult:
+def _mock_intent(text: str, category: str | None, expected_question: dict | None = None) -> IntentResult:
     low = text.lower()
     cat = None  # Category is resolved against real Elasticsearch data in graph.py.
     slots: dict = {}
@@ -119,11 +119,16 @@ def _mock_intent(text: str, category: str | None) -> IntentResult:
         # mock không hiểu ngữ nghĩa: không có tín hiệu nào -> off_topic
         # (LLM thật phân biệt được "phòng ngủ" là trả lời câu hỏi vs câu lạc đề)
         itype = "off_topic"
-    return IntentResult(
+    result = IntentResult(
         intent_type=itype, category=cat, priorities=prios,
         budget_max=slots.get("budget_max"), area_m2=slots.get("area_m2"),
         selected_index=selected_index, wants_product_details=wants_details,
     )
+    if expected_question and (slot := expected_question.get("slot")) in IntentResult.model_fields:
+        normalized = re.sub(r"\s+", " ", low).strip()
+        if normalized in {"có", "co", "cần", "can", "đúng", "dung", "không", "khong", "ko"}:
+            return result.model_copy(update={slot: normalized not in {"không", "khong", "ko"}, "intent_type": "same_topic"})
+    return result
 
 
 async def extract_intent(
@@ -133,7 +138,7 @@ async def extract_intent(
     expected_question: dict | None = None,
 ) -> IntentResult:
     if MOCK_LLM:
-        return _mock_intent(text, category)
+        return _mock_intent(text, category, expected_question)
     llm = _get_llm(LLM_MODEL_SMALL, 0.0).with_structured_output(IntentResult)
     system = INTENT_SYSTEM.format(category=category or "chưa có", slots=json.dumps(slots, ensure_ascii=False))
     if expected_question:
@@ -190,12 +195,9 @@ def _mock_phrase(kind: str, context: dict) -> str:
         warranty = product.get("warranty_parts") or "phần bảo hành bên em chưa có thông tin"
         return f"Dạ mẫu anh/chị chọn là {product['name']}, giá hiện tại {price}.\n\nBảo hành: {warranty}."
     if kind == "price_answer":
-        system = SALER_SYSTEM
-        user_msg = (
-            f"Answer which product is {context['price_order']} priced in the current filtered list. "
-            f"State its name and sale price naturally. Use only this catalog record: "
-            f"{json.dumps(context['product'], ensure_ascii=False)}"
-        )
+        product = context["product"]
+        price = product.get("price_sale")
+        return f"Dạ {product['name']} là mẫu {'đắt' if context['price_order'] == 'highest' else 'rẻ'} nhất, giá {price:,.0f}đ.".replace(",", ".")
     elif kind == "policy":
         top = context["hits"][0]
         snippet = top["text"].split("\n", 1)[-1].strip()[:400]  # bỏ dòng header [title]

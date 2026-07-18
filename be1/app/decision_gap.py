@@ -86,7 +86,7 @@ def choose_next_question(
     baseline_products = apply_hard_filters(products, slots)
     baseline_priorities = ontology.derive_priorities(category, slots, priorities)
     baseline = _signature(baseline_products, baseline_priorities)
-    best: tuple[float, str, float] | None = None
+    best: tuple[bool, float, str, float] | None = None
 
     for definition in ontology.get_slot_schema(category, products):
         slot = definition.name
@@ -103,12 +103,16 @@ def choose_next_question(
             changes.append(_top3_change(baseline, _signature(simulated_products, simulated_priorities)))
         expected_change = sum(changes) / len(changes)
         utility = expected_change / _EFFORT.get(slot, 1.0)
-        if utility > 0 and (best is None or utility > best[0]):
-            best = (utility, slot, expected_change)
+        # Required ontology questions are eligibility gates: retain them even
+        # when this catalog's current top-3 happens to be stable.
+        if (definition.required or utility > 0) and (
+            best is None or (definition.required, utility) > (best[0], best[1])
+        ):
+            best = (definition.required, utility, slot, expected_change)
 
     if best is None:
         return None
-    utility, slot, impact = best
+    _required, utility, slot, impact = best
     return NextQuestion(
         slot=slot,
         reason=(f"Decision-gap chọn '{slot}': tác động kỳ vọng lên top 3 là {impact:.2f}, "

@@ -29,8 +29,22 @@ def parse_price(value: Any) -> int | None:
     text = str(value).strip().lower()
     if text in {"", "unknown", "null", "none", "n/a", "đang cập nhật"}:
         return None
-    digits = "".join(re.findall(r"\d", text))
-    return int(digits) if digits and int(digits) > 0 else None
+    # Parse one leading monetary token only. Joining all digits turns strings
+    # such as "8.990.000đ, giảm 10%" into a fabricated price.
+    match = re.match(r"\s*(\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)\s*(đ|vnd|tr|triệu)?\b", text)
+    if not match:
+        return None
+    token = match.group(1)
+    unit = (match.group(2) or "").lower()
+    if re.search(r"(?:giảm|discount|%|trả góp|tra gop)", text[match.end():]):
+        return None
+    if unit in {"tr", "triệu"}:
+        amount = float(token.replace(",", ".")) * 1_000_000
+    elif re.search(r"[.,]\d{3}(?:[.,]\d{3})*", token):
+        amount = float(re.sub(r"[.,]", "", token))
+    else:
+        amount = float(token.replace(",", "."))
+    return int(amount) if amount > 0 else None
 
 
 def parse_area_range(value: Any) -> tuple[float | None, float | None]:

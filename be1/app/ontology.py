@@ -48,6 +48,15 @@ def _questions() -> dict[str, dict[str, Any]]:
     return {item["data"]["conceptId"]: item["data"] for item in _data()["questionNodes"]}
 
 
+def questions_for_category(category: str) -> list[dict[str, Any]]:
+    """Return ontology-owned questions; mapping them to catalog fields is LLM-compiled."""
+    normalized_category = _normal(category)
+    return [
+        question for question in _questions().values()
+        if _normal(question["category"]) in {"tat ca", normalized_category}
+    ]
+
+
 def get_slot_schema(category: str, products: list[dict[str, Any]] | None = None) -> list[SlotDef]:
     """Resolve question nodes generically from ontology + current catalog."""
     questions = _questions()
@@ -105,6 +114,7 @@ def cooling_area_required(slots: dict[str, Any]) -> float | None:
 
 def derive_priorities(category: str, slots: dict[str, Any], priorities: list[str]) -> list[str]:
     result = list(priorities)
-    if category == "may_lanh" and slots.get("room_type") == "bedroom" and "it_on" not in result:
+    category_slug = "_".join(_normal(category).split())
+    if category_slug == "may_lanh" and slots.get("room_type") == "bedroom" and "it_on" not in result:
         result.append("it_on")
     return result

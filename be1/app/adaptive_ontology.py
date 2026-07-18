@@ -229,9 +229,16 @@ class AdaptiveOntologyEngine:
                     matched_modules=sorted(common_modules)))
         return sorted(result, key=lambda item: item.score, reverse=True)[:3]
 
-    def _profile_id(self, category: str) -> str:
+    def _profile_id(self, category: str, request: AdaptCategoryRequest | None = None) -> str:
         slug = re.sub(r"[^a-z0-9]+", "_", normalize_text(category)).strip("_") or "unknown"
-        return f"profile_{slug}_{sha256(category.encode()).hexdigest()[:8]}"
+        evidence = {
+            "category": category,
+            "raw_fields": sorted(normalize_text(item) for item in (request.raw_fields if request else [])),
+            "samples": request.sample_products if request else [],
+            "descriptions": request.product_descriptions if request else [],
+        }
+        digest = sha256(json.dumps(evidence, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()[:12]
+        return f"profile_{slug}_{digest}"
 
     def _category_items(self, category: str) -> dict[str, list[dict[str, Any]]]:
         core = self._by_category.get(CORE_CATEGORY, {})
@@ -262,7 +269,7 @@ class AdaptiveOntologyEngine:
 
     def adapt(self, request: AdaptCategoryRequest) -> AdaptedOntologyResponse:
         category = self.canonical_category(request.category_name)
-        profile_id = self._profile_id(category)
+        profile_id = self._profile_id(category, request)
         registry = self._load_registry()
         if profile_id in registry and not request.force_regenerate:
             return AdaptedOntologyResponse.model_validate(registry[profile_id])
