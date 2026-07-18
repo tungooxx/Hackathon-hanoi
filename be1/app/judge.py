@@ -13,6 +13,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .config import JUDGE_API_KEY, JUDGE_BASE_URL, JUDGE_MODEL, MOCK_JUDGE
+from .llm_compat import astructured
 
 Verdict = Literal["SUPPORTED", "CONTRADICTED", "UNSUPPORTED", "SALER_TALK"]
 
@@ -116,7 +117,7 @@ async def judge_turn(record: dict) -> TurnJudgment:
     """record = 1 dòng của logs/turns.jsonl."""
     if MOCK_JUDGE:
         return _mock_judge(record)
-    llm = _get_judge_llm().with_structured_output(TurnJudgment)
+    llm = _get_judge_llm()
     user_msg = (
         f"KHÁCH HỎI: {record['query']}\n\n"
         f"BOT TRẢ LỜI:\n{record['response']}\n\n"
@@ -124,7 +125,7 @@ async def judge_turn(record: dict) -> TurnJudgment:
         f"{json.dumps(record.get('context_json'), ensure_ascii=False)}\n\n"
         f"FUNNEL (số sản phẩm khớp bộ lọc): {json.dumps(record.get('funnel'), ensure_ascii=False)}"
     )
-    return await llm.ainvoke([("system", JUDGE_SYSTEM), ("user", user_msg)])
+    return await astructured(llm, TurnJudgment, [("system", JUDGE_SYSTEM), ("user", user_msg)])
 
 
 def aggregate(judged: list[dict]) -> dict:

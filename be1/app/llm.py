@@ -18,6 +18,7 @@ from .config import (
     MAX_ENRICH_ITERS,
     MOCK_LLM,
 )
+from .llm_compat import ReasoningStreamFilter, astructured, strip_reasoning
 from .schemas import IntentResult, SessionContentResult, WebSpec
 from .session_history import (
     HistoryMessage,
@@ -223,7 +224,7 @@ async def extract_intent(
 ) -> IntentResult:
     if MOCK_LLM:
         return _mock_intent(text, category, expected_question)
-    llm = _get_llm(LLM_MODEL_SMALL, 0.0).with_structured_output(IntentResult)
+    llm = _get_llm(LLM_MODEL_SMALL, 0.0)
     system = INTENT_SYSTEM.format(category=category or "chưa có", slots=json.dumps(slots, ensure_ascii=False))
     if known_categories:
         # Nhãn category thật từ Elasticsearch: cho model nhỏ map ngôn ngữ đời thường
@@ -265,7 +266,9 @@ async def extract_intent(
         "\nWhen the customer asks for the most expensive/highest priced option in the current list, "
         "set price_order='highest'. For cheapest/lowest priced, set price_order='lowest'."
     )
-    return await llm.ainvoke([("system", system), ("user", text)], config=lf_config("intent"))
+    return await astructured(
+        llm, IntentResult, [("system", system), ("user", text)], config=lf_config("intent")
+    )
 
 
 async def summarize_session_history(
@@ -277,14 +280,14 @@ async def summarize_session_history(
     if MOCK_LLM:
         return mock_markdown_summary(session_content, recent_messages)
 
-    model = _get_llm(LLM_MODEL_SMALL, 0.0).with_structured_output(
-        SessionContentResult
-    )
+    model = _get_llm(LLM_MODEL_SMALL, 0.0)
     payload = {
         "previous_compressed_context": session_content or None,
         "completed_recent_messages": recent_messages,
     }
-    result = await model.ainvoke(
+    result = await astructured(
+        model,
+        SessionContentResult,
         [
             ("system", HISTORY_SUMMARY_SYSTEM),
             ("user", json.dumps(payload, ensure_ascii=False)),
@@ -412,11 +415,20 @@ async def stream_phrase(kind: str, context: dict) -> AsyncIterator[str]:
     cfg = lf_config(f"phrase_{kind}")
     for attempt in range(3):  # FPT thỉnh thoảng 404/timeout lúc mở stream -> retry khi CHƯA yield
         started = False
+        # GLM (reasoning) có thể bọc suy luận trong <think>...</think> ngay trong content
+        # -> lọc trên luồng để không lộ ra khách. Provider không reasoning => no-op.
+        rf = ReasoningStreamFilter()
         try:
             async for chunk in llm.astream(msgs, config=cfg):
                 if chunk.content:
-                    started = True
-                    yield chunk.content
+                    visible = rf.feed(chunk.content)
+                    if visible:
+                        started = True
+                        yield visible
+            tail = rf.flush()
+            if tail:
+                started = True
+                yield tail
             return
         except Exception:
             if started or attempt == 2:  # đã stream dở -> không retry (tránh lặp text)
@@ -462,9 +474,9 @@ async def extract_web_specs(product_name: str, results: list[dict]) -> dict:
     blob = "\n\n".join(f"[{r.get('title','')}] {r.get('content','')}" for r in results)
     user = f"Sản phẩm khách hỏi: {product_name}\n\nCÁC ĐOẠN WEB:\n{blob or '(không có kết quả)'}"
     try:
-        llm = _get_llm(LLM_MODEL_LARGE, 0.0).with_structured_output(WebSpec, method="function_calling")
-        spec: WebSpec = await llm.ainvoke(
-            [("system", WEBSPEC_SYSTEM), ("user", user)], config=lf_config("web_specs")
+        spec: WebSpec = await astructured(
+            _get_llm(LLM_MODEL_LARGE, 0.0), WebSpec,
+            [("system", WEBSPEC_SYSTEM), ("user", user)], config=lf_config("web_specs"),
         )
         spec.product_name = spec.product_name or product_name
         return spec.to_payload()
@@ -492,7 +504,7 @@ async def run_tool_agent(user_input: str, on_tool=None, max_iters: int = MAX_ENR
         msgs.append(ai)
         tool_calls = getattr(ai, "tool_calls", None) or []
         if not tool_calls:
-            return {"final_text": ai.content, "tool_results": collected}
+            return {"final_text": strip_reasoning(ai.content), "tool_results": collected}
         for tc in tool_calls:
             name, args = tc["name"], tc.get("args", {})
             if on_tool:
@@ -511,4 +523,4 @@ async def run_tool_agent(user_input: str, on_tool=None, max_iters: int = MAX_ENR
     final = await _get_llm(LLM_MODEL_LARGE, 0.2).ainvoke(
         msgs + [_HM("Hết lượt tra cứu. Hãy chốt câu trả lời, không gọi thêm tool.")], config=cfg
     )
-    return {"final_text": final.content, "tool_results": collected}
+    return {"final_text": strip_reasoning(final.content), "tool_results": collected}
