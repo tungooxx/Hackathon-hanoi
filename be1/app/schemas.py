@@ -85,7 +85,10 @@ class IntentResult(BaseModel):
                 "needs_heating": self.needs_heating,
                 "iron_portable": self.iron_portable,
             }.items()
-            if v is not None
+            # Structured-output providers commonly emit an empty string for
+            # an unknown optional field. That is absence, not an executable
+            # catalog constraint (and must never appear in the customer funnel).
+            if v is not None and not (isinstance(v, str) and not v.strip())
         }
 
 
