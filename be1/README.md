@@ -7,13 +7,57 @@ Flow: `intent → retrieve → [hỏi ngược | so sánh top 3] | off-topic`, t
 
 ```bash
 cd be1
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env            # MOCK_LLM=1: chạy không cần API key
-.venv/bin/uvicorn app.main:app --port 8100
-.venv/bin/python scripts/smoke.py   # smoke test 4 turn, phải ALL PASS
+# Đặt cùng mật khẩu trong docker/.env.docker và DATABASE_URL trong .env.
+docker compose -f docker/docker-compose.yml up -d postgres elasticsearch
+uv sync
+uv run alembic upgrade head
+uv run uvicorn app.main:app --port 8100
+uv run python scripts/smoke.py   # smoke test 4 turn, phải ALL PASS
 ```
 
 Cắm LLM thật: sửa `.env` → `MOCK_LLM=0` + `LLM_API_KEY` (OpenAI-compatible: Groq/Fireworks/Together).
+
+## PostgreSQL + migrations
+
+PostgreSQL lưu dữ liệu bền vững của ứng dụng; Elasticsearch vẫn chỉ dùng cho
+tìm kiếm sản phẩm. Schema hiện tại gồm:
+
+- `users`: danh tính ổn định theo UUID, số điện thoại E.164 là duy nhất.
+- `otp_challenges`: chỉ lưu digest của OTP, thời hạn và số lần thử còn lại.
+- `auth_sessions`: chỉ lưu digest của refresh token, có thể revoke theo session.
+
+Sau khi đổi model trong `db/models.py`, tạo và kiểm tra migration:
+
+```bash
+uv run alembic revision --autogenerate -m "describe the change"
+uv run alembic upgrade head
+uv run alembic current --check-heads
+```
+
+## Phone authentication service
+
+The backend service layer is implemented under `app/auth/` and
+`app/repositories/`. It currently provides:
+
+- Vietnamese phone normalization to E.164.
+- Cryptographically generated OTPs stored only as HMAC digests.
+- Resend cooldowns and rolling phone/IP request limits.
+- Persisted verification-attempt limits, expiry, and replay prevention.
+- Access/refresh JWT pairs bound to a revocable database session.
+- Refresh-token rotation with replay detection.
+- Access-token authentication and idempotent logout revocation.
+
+`OTP_PROVIDER=console` prints a masked phone number and OTP for local
+development. It is rejected when `APP_ENV=production`; configure a real SMS
+adapter before deploying. HTTP authentication routes and cookies are added in
+the next implementation phase.
+
+Run the service and security tests against the local PostgreSQL container:
+
+```bash
+uv run python -m unittest discover -s tests -v
+```
 
 ## API cho FE
 

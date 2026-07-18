@@ -7,3 +7,8 @@ pydantic
 httpx
 python-dotenv
 langfuse
+sqlalchemy
+asyncpg
+alembic
+PyJWT
+phonenumbers

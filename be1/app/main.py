@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from db import elasticsearch
+from db import elasticsearch, postgres
 
 from .graph import graph
 from .schemas import ChatRequest
@@ -16,11 +16,8 @@ from .turnlog import log_turn
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    await elasticsearch.start()
-    try:
+    async with postgres, elasticsearch:
         yield
-    finally:
-        await elasticsearch.close()
 
 
 app = FastAPI(title="DMX Advisor BE1", lifespan=lifespan)

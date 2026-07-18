@@ -1,0 +1,9 @@
+This directory contains Alembic schema migrations for BE1 PostgreSQL data.
+
+Run all migrations from the `be1` directory:
+
+    uv run alembic upgrade head
+
+Create a migration after changing `db/models.py`:
+
+    uv run alembic revision --autogenerate -m "describe the change"
