@@ -32,6 +32,13 @@ export default function ChatBubble() {
   const sessionId = useRef(newSessionId())
   const abortRef = useRef(null)
   const resizeStartRef = useRef(null)
+  // khóa đồng bộ chống gửi lặp: state `typing` cập nhật bất đồng bộ nên hai
+  // sự kiện Enter trong cùng một tick (thường gặp khi gõ tiếng Việt bằng IME)
+  // đều thấy typing=false và cùng gửi -> trùng câu trả lời của bot.
+  const sendingRef = useRef(false)
+  // bộ đếm id đơn điệu, đảm bảo mỗi tin có id DUY NHẤT (Date.now() gọi nhiều
+  // lần có thể trùng nhau -> user và bot dính chung id -> text bot đổ nhầm bong bóng)
+  const msgSeq = useRef(0)
 
   const onResizeStart = (e) => {
     e.preventDefault()
@@ -111,12 +118,14 @@ export default function ChatBubble() {
 
   const send = () => {
     const text = input.trim()
-    if (!text || typing) return
+    if (!text || sendingRef.current) return
+    sendingRef.current = true
 
-    const botId = Date.now() + 1
+    const userId = `u-${++msgSeq.current}`
+    const botId = `b-${++msgSeq.current}`
     setMessages((m) => [
       ...m,
-      { id: Date.now(), from: 'user', segments: [text] },
+      { id: userId, from: 'user', segments: [text] },
       { id: botId, from: 'bot', segments: [''], funnel: null, products: null, reason: null },
     ])
     setInput('')
@@ -132,13 +141,17 @@ export default function ChatBubble() {
         onQuestion: (q) => patchBot(botId, { reason: q.reason }),
         onText: (chunk) => appendBotText(botId, chunk),
         onProducts: (products) => patchBot(botId, { products }),
-        onDone: () => setTyping(false),
+        onDone: () => {
+          sendingRef.current = false
+          setTyping(false)
+        },
         onError: () => {
           patchBot(botId, (msg) => ({
             segments: msg.segments.join('')
               ? msg.segments
               : ['Dạ hệ thống đang bận, anh/chị thử lại sau giúp em nhé. 🙏'],
           }))
+          sendingRef.current = false
           setTyping(false)
         },
       },
@@ -146,7 +159,11 @@ export default function ChatBubble() {
   }
 
   const onKeyDown = (e) => {
-    if (e.key === 'Enter') send()
+    // e.nativeEvent.isComposing / keyCode 229 = IME đang soạn (gõ tiếng Việt):
+    // Enter lúc này chỉ để chốt ký tự, không phải để gửi tin.
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing || e.keyCode === 229) return
+    e.preventDefault()
+    send()
   }
 
   return (
