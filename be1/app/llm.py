@@ -7,6 +7,7 @@ MOCK_LLM=1 -> regex/template, chạy full luồng không cần API key.
 """
 import asyncio
 import json
+import logging
 import re
 from collections.abc import AsyncIterator
 
@@ -27,6 +28,8 @@ from .session_history import (
 )
 from .tracing import lf_config
 
+logger = logging.getLogger(__name__)
+
 INTENT_SYSTEM = """Bạn là bộ phân tích ý định cho trợ lý bán hàng Điện Máy Xanh.
 Trích xuất từ tin nhắn khách (tiếng Việt có thể sai chính tả, không dấu, viết tắt).
 Ngữ cảnh hội thoại: category hiện tại = {category}, thông tin đã có = {slots}.
@@ -43,7 +46,7 @@ KHÔNG phải off_topic.
 ("tủ để đồ ăn khỏi thiu" -> tủ lạnh; "air purifier" -> máy lọc không khí; "mún mua máy sấy tóc" -> máy sấy tóc). \
 Nếu có DANH MỤC KHO được cung cấp bên dưới: chọn CHÉP NGUYÊN VĂN đúng một nhãn trong đó khớp nhu cầu nhất; \
 không nhãn nào khớp -> để trống. Câu nói vu vơ không phải nhu cầu mua sắm thì KHÔNG gán category.
-- budget_max đổi về VND: "10tr"/"10 triệu" -> 10000000. "tầm"/"khoảng" vẫn tính là budget_max.
+- Chỉ điền budget_max khi khách nói rõ mức tối đa ("dưới", "không quá", "tối đa"). Chỉ điền budget_min khi khách nói rõ mức tối thiểu ("trên", "từ ... trở lên"). Một con số giá không có ngữ cảnh phải để trống để hệ thống hỏi làm rõ, không được tự hiểu là mức tối đa.
 - product_mentions: chép NGUYÊN VĂN tên/mã sản phẩm khách gõ, không sửa chính tả.
 - Nếu khách nói "loại/mẫu số 1", "máy 1", "mẫu đầu", hoặc yêu cầu thông tin chi tiết về một mẫu
   trong danh sách vừa gợi ý: đặt selected_index (1-3), wants_product_details=true và intent_type=same_topic.
@@ -266,9 +269,17 @@ async def extract_intent(
         "\nWhen the customer asks for the most expensive/highest priced option in the current list, "
         "set price_order='highest'. For cheapest/lowest priced, set price_order='lowest'."
     )
-    return await astructured(
-        llm, IntentResult, [("system", system), ("user", text)], config=lf_config("intent")
-    )
+    try:
+        return await astructured(
+            llm, IntentResult, [("system", system), ("user", text)], config=lf_config("intent")
+        )
+    except Exception as error:
+        # The catalog resolver in graph.py remains authoritative for category
+        # discovery.  A malformed provider structured response must therefore
+        # degrade to deterministic extraction, not fail an otherwise simple
+        # shopping request with a generic outage message.
+        logger.warning("Intent structured output failed; using deterministic fallback: %s", error)
+        return _mock_intent(text, category, expected_question)
 
 
 async def summarize_session_history(

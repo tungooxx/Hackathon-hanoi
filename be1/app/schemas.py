@@ -18,6 +18,7 @@ class IntentResult(BaseModel):
     )
     category: Optional[Category] = None
     budget_max: Optional[float] = Field(None, description="Ngân sách tối đa, đơn vị VND")
+    budget_min: Optional[float] = Field(None, description="Ngân sách tối thiểu, đơn vị VND")
     area_m2: Optional[float] = Field(None, description="Diện tích phòng (m²)")
     brand: Optional[str] = Field(None, description="Thương hiệu khách nhắc đến, đã sửa chính tả")
     afternoon_sun: Optional[Literal["low", "medium", "high"]] = None
@@ -77,6 +78,7 @@ class IntentResult(BaseModel):
             k: v
             for k, v in {
                 "budget_max": self.budget_max,
+                "budget_min": self.budget_min,
                 "area_m2": self.area_m2,
                 "brand": self.brand,
                 "afternoon_sun": self.afternoon_sun,

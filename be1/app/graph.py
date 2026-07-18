@@ -12,6 +12,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
 from . import fulfillment, llm, ontology, product_repo, rag, tools
+from .budget import parse_budget_constraint
 from .config import COMPARE_THRESHOLD, LLM_API_KEY, MOCK_LLM, RAG_MIN_SCORE, RAG_TOP_K
 from .decision_gap import choose_next_question
 from .filtering import apply_hard_filters
@@ -58,6 +59,7 @@ class AgentState(TypedDict, total=False):
     session_content: str
     recent_messages: list[HistoryMessage]
     topic_changed: bool
+    budget_pending: float | None
 
 
 def _slot_defs(raw: list[Any] | None) -> list[SlotDef]:
@@ -82,6 +84,10 @@ def _customer_visible_slots(slots: dict[str, Any], schema: list[Any] | None = No
             continue
         if definition.maps_to_field.startswith("attributes."):
             visible[definition.maps_to_field.split(".", 1)[1]] = value
+    if "budget_min" in visible:
+        visible["ngân sách từ"] = visible.pop("budget_min")
+    if "budget_target" in visible:
+        visible["ngân sách khoảng"] = visible.pop("budget_target")
     return visible
 
 
@@ -123,6 +129,25 @@ async def intent_node(state: AgentState) -> dict:
         recent_messages=state.get("recent_messages", []),
         known_categories=known_categories,
     )
+    budget_constraint = parse_budget_constraint(
+        state["user_input"], pending_amount=state.get("budget_pending")
+    )
+    budget_pending: float | None = None
+    if budget_constraint:
+        answers = dict(result.ontology_answers)
+        if expected_definition and expected_definition.maps_to_field in {"price_sale", "price_original"}:
+            answers[expected_definition.name] = ontology._SKIP_ANSWER
+        if budget_constraint.kind == "ambiguous":
+            budget_pending = budget_constraint.target
+            result = result.model_copy(update={
+                "budget_max": None, "budget_min": None, "ontology_answers": answers,
+            })
+        else:
+            result = result.model_copy(update={
+                "budget_max": budget_constraint.high,
+                "budget_min": budget_constraint.low,
+                "ontology_answers": answers,
+            })
     if awaiting_fulfillment:
         required_key = fulfillment.fulfillment_provider.required_context(fulfillment_context)
         if required_key:
@@ -133,7 +158,7 @@ async def intent_node(state: AgentState) -> dict:
             elif resolution:
                 fulfillment_candidates = resolution.candidates
     normalized_active_number = result.active_answer_numeric_value
-    if (expected_definition and expected_definition.maps_to_field in {"price_sale", "price_original"}
+    if (budget_constraint is None and expected_definition and expected_definition.maps_to_field in {"price_sale", "price_original"}
             and (result.budget_max is not None or normalized_active_number is not None)):
         normalized_budget = result.budget_max if result.budget_max is not None else normalized_active_number
         result = result.model_copy(update={
@@ -214,7 +239,8 @@ async def intent_node(state: AgentState) -> dict:
     # Do not let a vague reply become a fake filter.  The active schema and
     # current catalog decide whether the answer is executable; the LLM only
     # supplies language understanding.
-    if expected_definition and expected_definition.name in result.ontology_answers:
+    if (expected_definition and expected_definition.name in result.ontology_answers
+            and not (budget_constraint and expected_definition.maps_to_field in {"price_sale", "price_original"})):
         # Preserve operators and qualifiers from the customer's actual words
         # ("trở lên", "dưới", "khoảng"), which a semantic LLM may omit when
         # returning a normalized answer label. Price is the exception because
@@ -274,12 +300,31 @@ async def intent_node(state: AgentState) -> dict:
     )
     if topic_changed:
         # đổi category giữa chừng: reset slots trừ budget, reset đếm câu hỏi
-        slots = {k: v for k, v in slots.items() if k == "budget_max"}
+        slots = {k: v for k, v in slots.items() if k in {"budget_min", "budget_max", "budget_target"}}
         asked, ask_count = [], 0
     if result.category:
         category = result.category
 
     slots.update(result.slot_dict())
+    if budget_constraint:
+        for key in ("budget_min", "budget_max", "budget_target"):
+            slots.pop(key, None)
+        if budget_constraint.kind == "min":
+            slots["budget_min"] = budget_constraint.low
+        elif budget_constraint.kind == "max":
+            slots["budget_max"] = budget_constraint.high
+        elif budget_constraint.kind == "range":
+            slots["budget_min"] = budget_constraint.low
+            slots["budget_max"] = budget_constraint.high
+        elif budget_constraint.kind == "target":
+            slots["budget_target"] = budget_constraint.target
+            catalog_preferences = [
+                item for item in catalog_preferences
+                if not (item.get("field") == "price_sale" and item.get("direction") == "closest")
+            ]
+            catalog_preferences.append({
+                "field": "price_sale", "direction": "closest", "target": budget_constraint.target,
+            })
     # Dynamic ontology concepts are returned by the LLM under their exact
     # concept ID, so new categories need no Pydantic field or Python mapping.
     slots.update(result.ontology_answers)
@@ -308,6 +353,7 @@ async def intent_node(state: AgentState) -> dict:
         "fulfillment_candidates": fulfillment_candidates,
         "catalog_preferences": catalog_preferences,
         "topic_changed": topic_changed,
+        "budget_pending": budget_pending,
     }
 
 
@@ -398,6 +444,8 @@ def route_after_intent(state: AgentState) -> str:
     # for an unrelated catalog category.
     if llm.looks_like_greeting(user_input):
         return "greeting"
+    if state.get("budget_pending") is not None and state.get("category"):
+        return "budget_clarify"
     # Khách đang trả lời câu hỏi nhu cầu của luồng "sản phẩm lạ" -> tiếp tục resolve.
     if state.get("enrich_pending"):
         return "resolve"
@@ -843,6 +891,19 @@ async def catalog_unavailable_node(state: AgentState) -> dict:
     return {}
 
 
+async def budget_clarify_node(state: AgentState) -> dict:
+    w = get_stream_writer()
+    amount = state.get("budget_pending")
+    display = f"{amount / 1_000_000:g} triệu" if amount and amount >= 1_000_000 else f"{amount:,.0f}đ"
+    message = (
+        f"Dạ {display} là mức mình muốn chi tối đa, muốn tìm từ mức đó trở lên, "
+        "hay chỉ cần giá quanh mức đó ạ?"
+    )
+    w({"type": "text_chunk", "content": message})
+    w({"type": "done", "turn_type": "budget_clarify"})
+    return _assistant_history(state, message)
+
+
 async def clarify_category_node(state: AgentState) -> dict:
     w = get_stream_writer()
     choices = state["category_candidates"]
@@ -935,6 +996,7 @@ def build_graph(*, checkpointer):
     g.add_node("off_topic", off_topic_node)
     g.add_node("greeting", greeting_node)
     g.add_node("catalog_unavailable", catalog_unavailable_node)
+    g.add_node("budget_clarify", budget_clarify_node)
     g.add_node("clarify_category", clarify_category_node)
     g.add_node("fulfillment_prompt", fulfillment_prompt_node)
     g.add_node("fulfillment_check", fulfillment_check_node)
@@ -945,6 +1007,7 @@ def build_graph(*, checkpointer):
                             {"retrieve": "retrieve", "policy": "policy", "off_topic": "off_topic",
                              "greeting": "greeting", "product_lookup": "product_lookup", "resolve": "resolve",
                              "catalog_unavailable": "catalog_unavailable", "clarify_category": "clarify_category",
+                             "budget_clarify": "budget_clarify",
                              "fulfillment_prompt": "fulfillment_prompt", "fulfillment_check": "fulfillment_check",
                              "fulfillment_clarify": "fulfillment_clarify"})
     g.add_conditional_edges("retrieve", route_after_retrieve,
@@ -962,6 +1025,7 @@ def build_graph(*, checkpointer):
     g.add_edge("off_topic", END)
     g.add_edge("greeting", END)
     g.add_edge("catalog_unavailable", END)
+    g.add_edge("budget_clarify", END)
     g.add_edge("clarify_category", END)
     g.add_edge("fulfillment_prompt", END)
     g.add_conditional_edges(

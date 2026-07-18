@@ -18,7 +18,9 @@ def _rank_score(products: list[dict], field: str, higher_better: bool) -> dict[s
     return {p["sku"]: (n - i) / n for i, p in enumerate(have)}
 
 
-def _catalog_preference_score(products: list[dict], field: str, higher_better: bool) -> dict[str, float]:
+def _catalog_preference_score(
+    products: list[dict], field: str, higher_better: bool, target: float | None = None,
+) -> dict[str, float]:
     """Rank an evidenced numeric catalog field without category-specific code."""
     pairs: list[tuple[dict, float]] = []
     if field.startswith("attributes."):
@@ -31,7 +33,8 @@ def _catalog_preference_score(products: list[dict], field: str, higher_better: b
         for product in products:
             if product.get(field) is not None:
                 pairs.append((product, float(product[field])))
-    pairs.sort(key=lambda item: item[1], reverse=higher_better)
+    pairs.sort(key=(lambda item: abs(item[1] - target)) if target is not None else (lambda item: item[1]),
+               reverse=False if target is not None else higher_better)
     return {product["sku"]: (len(pairs) - index) / len(pairs) for index, (product, _value) in enumerate(pairs)} if pairs else {}
 
 
@@ -55,7 +58,8 @@ def rank_top3(candidates: list[dict], priorities: list[str], catalog_preferences
             scores[sku] += w * s
     for preference in catalog_preferences or []:
         for sku, score in _catalog_preference_score(
-            candidates, preference.get("field", ""), preference.get("direction") == "higher"
+            candidates, preference.get("field", ""), preference.get("direction") == "higher",
+            preference.get("target") if preference.get("direction") == "closest" else None,
         ).items():
             scores[sku] += score
     ranked = sorted(candidates, key=lambda p: scores[p["sku"]], reverse=True)
