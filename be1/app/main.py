@@ -8,6 +8,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from db import elasticsearch, postgres
 
+from .auth.handlers import install_auth_exception_handlers
+from .auth.router import router as auth_router
+from .config import FRONTEND_ORIGINS, validate_auth_config
 from .graph import graph
 from .schemas import ChatRequest
 from .tracing import set_session
@@ -16,14 +19,23 @@ from .turnlog import log_turn
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    validate_auth_config()
     async with postgres, elasticsearch:
         yield
 
 
 app = FastAPI(title="DMX Advisor BE1", lifespan=lifespan)
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=list(FRONTEND_ORIGINS),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Accept", "Content-Type"],
+    expose_headers=["Retry-After"],
+    max_age=600,
 )
+install_auth_exception_handlers(app)
+app.include_router(auth_router)
 
 
 @app.get("/health")
@@ -44,7 +56,10 @@ async def chat(req: ChatRequest):
             ):
                 events.append(payload)
                 if not payload["type"].startswith("_"):  # "_..." = internal, log-only
-                    yield {"event": payload["type"], "data": json.dumps(payload, ensure_ascii=False)}
+                    yield {
+                        "event": payload["type"],
+                        "data": json.dumps(payload, ensure_ascii=False),
+                    }
         finally:
             log_turn(req.session_id, req.message, events)
 

@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import os
 import unittest
-import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
 from dotenv import dotenv_values
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -16,20 +15,19 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.auth.exceptions import (
-    InvalidOtpCode,
-    OtpChallengeConsumed,
-    OtpChallengeExpired,
-    OtpCooldown,
-    OtpDeliveryError,
-    OtpRateLimited,
+    InvalidCredentials,
+    LoginRateLimited,
+    PhoneAlreadyRegistered,
     RevokedAuthSession,
+    WeakPassword,
 )
-from app.auth.security import client_ip_digest
+from app.auth.security import phone_login_digest, verify_password
 from app.auth.service import AuthService
-from app.config import OTP_IP_RATE_LIMIT_COUNT
-from db.models import AuthSession, OtpChallenge, User
+from app.config import LOGIN_PHONE_RATE_LIMIT_COUNT
+from db.models import AuthLoginAttempt, AuthSession, User
 
 BE1_ROOT = Path(__file__).resolve().parent.parent
+PASSWORD = "correct-password-123"
 
 
 class MutableClock:
@@ -41,23 +39,6 @@ class MutableClock:
 
     def advance(self, **kwargs: int) -> None:
         self.current += timedelta(**kwargs)
-
-
-class CaptureOtpProvider:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.fail = fail
-        self.deliveries: list[tuple[str, str, int]] = []
-
-    async def send_otp(
-        self,
-        phone_e164: str,
-        code: str,
-        *,
-        expires_in_seconds: int,
-    ) -> None:
-        if self.fail:
-            raise OtpDeliveryError("simulated delivery failure")
-        self.deliveries.append((phone_e164, code, expires_in_seconds))
 
 
 def test_database_url() -> str:
@@ -93,12 +74,7 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.session = factory()
         self.clock = MutableClock(datetime.now(UTC).replace(microsecond=0))
-        self.provider = CaptureOtpProvider()
-        self.service = AuthService(
-            self.session,
-            otp_provider=self.provider,
-            clock=self.clock,
-        )
+        self.service = AuthService(self.session, clock=self.clock)
 
     async def asyncTearDown(self) -> None:
         await self.session.close()
@@ -107,88 +83,135 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         await self.connection.close()
         await self.engine.dispose()
 
-    async def test_request_verify_and_authenticate(self) -> None:
-        request = await self.service.request_otp(
-            "0901234567",
-            client_ip="127.0.0.1",
-        )
-        phone, code, _ = self.provider.deliveries[-1]
-        self.assertEqual(phone, "+84901234567")
+    async def test_register_hashes_password_and_authenticates(self) -> None:
+        registered = await self.service.register("0901234567", PASSWORD)
 
-        async with self.session.begin():
-            challenge = await self.session.get(
-                OtpChallenge,
-                request.challenge_id,
-            )
-            assert challenge is not None
-            self.assertNotEqual(challenge.code_digest, code)
-            self.assertNotEqual(
-                challenge.request_ip_digest,
-                "127.0.0.1",
-            )
-
-        authenticated = await self.service.verify_otp(
-            request.challenge_id,
-            code,
-        )
-        self.assertTrue(authenticated.is_new_user)
+        self.assertTrue(registered.is_new_user)
         identity = await self.service.authenticate_access_token(
-            authenticated.tokens.access_token
+            registered.tokens.access_token
         )
-        self.assertEqual(identity.id, authenticated.user.id)
-
-        with self.assertRaises(OtpChallengeConsumed):
-            await self.service.verify_otp(request.challenge_id, code)
+        self.assertEqual(identity.id, registered.user.id)
 
         async with self.session.begin():
-            users = list((await self.session.scalars(select(User))).all())
+            user = await self.session.get(User, registered.user.id)
+            assert user is not None
+            self.assertNotEqual(user.password_hash, PASSWORD)
+            self.assertTrue(verify_password(PASSWORD, user.password_hash))
+            self.assertIsNotNone(user.last_login_at)
+
             sessions = list((await self.session.scalars(select(AuthSession))).all())
-            self.assertEqual(len(users), 1)
             self.assertEqual(len(sessions), 1)
             self.assertNotEqual(
                 sessions[0].refresh_token_digest,
-                authenticated.tokens.refresh_token,
+                registered.tokens.refresh_token,
             )
 
-    async def test_wrong_codes_persist_attempts_and_consume_challenge(self) -> None:
-        request = await self.service.request_otp("0901234567")
+    async def test_registration_rejects_duplicate_and_legacy_user(self) -> None:
+        await self.service.register("0901234567", PASSWORD)
+        with self.assertRaises(PhoneAlreadyRegistered):
+            await self.service.register("0901234567", PASSWORD)
 
-        for expected_remaining in (4, 3, 2, 1, 0):
-            with self.assertRaises(InvalidOtpCode) as caught:
-                await self.service.verify_otp(
-                    request.challenge_id,
-                    "111111",
+        async with self.session.begin():
+            self.session.add(
+                User(
+                    phone_e164="+84987654321",
+                    password_hash=None,
+                    is_active=True,
+                    created_at=self.clock.current,
+                    updated_at=self.clock.current,
                 )
-            self.assertEqual(
-                caught.exception.attempts_remaining,
-                expected_remaining,
             )
 
-        with self.assertRaises(OtpChallengeConsumed):
-            await self.service.verify_otp(
-                request.challenge_id,
-                self.provider.deliveries[-1][1],
+        with self.assertRaises(PhoneAlreadyRegistered):
+            await self.service.register("0987654321", PASSWORD)
+
+    async def test_registration_enforces_password_length(self) -> None:
+        with self.assertRaises(WeakPassword):
+            await self.service.register("0901234567", "short")
+
+    async def test_login_succeeds_and_clears_previous_failures(self) -> None:
+        registered = await self.service.register("0901234567", PASSWORD)
+        await self.service.revoke_refresh_token(registered.tokens.refresh_token)
+
+        with self.assertRaises(InvalidCredentials):
+            await self.service.login(
+                "0901234567",
+                "incorrect-password",
+                client_ip="127.0.0.1",
             )
 
-    async def test_expired_challenge_is_consumed(self) -> None:
-        request = await self.service.request_otp("0901234567")
-        code = self.provider.deliveries[-1][1]
-        self.clock.advance(minutes=6)
+        logged_in = await self.service.login(
+            "0901234567",
+            PASSWORD,
+            client_ip="127.0.0.1",
+        )
+        self.assertFalse(logged_in.is_new_user)
 
-        with self.assertRaises(OtpChallengeExpired):
-            await self.service.verify_otp(request.challenge_id, code)
-        with self.assertRaises(OtpChallengeConsumed):
-            await self.service.verify_otp(request.challenge_id, code)
+        async with self.session.begin():
+            attempts = await self.session.scalar(
+                select(func.count(AuthLoginAttempt.id)).where(
+                    AuthLoginAttempt.phone_digest == phone_login_digest("+84901234567")
+                )
+            )
+            self.assertEqual(attempts, 0)
+
+    async def test_invalid_credentials_are_persisted_and_rate_limited(
+        self,
+    ) -> None:
+        await self.service.register("0901234567", PASSWORD)
+
+        for _ in range(LOGIN_PHONE_RATE_LIMIT_COUNT):
+            with self.assertRaises(InvalidCredentials):
+                await self.service.login(
+                    "0901234567",
+                    "incorrect-password",
+                    client_ip="127.0.0.1",
+                )
+
+        with self.assertRaises(LoginRateLimited) as caught:
+            await self.service.login(
+                "0901234567",
+                PASSWORD,
+                client_ip="127.0.0.1",
+            )
+        self.assertGreater(caught.exception.retry_after_seconds, 0)
+
+        self.clock.advance(minutes=16)
+        logged_in = await self.service.login(
+            "0901234567",
+            PASSWORD,
+            client_ip="127.0.0.1",
+        )
+        self.assertEqual(logged_in.user.id, (await self._only_user()).id)
+
+    async def test_unknown_phone_uses_same_public_failure(self) -> None:
+        with self.assertRaises(InvalidCredentials):
+            await self.service.login(
+                "0901234567",
+                PASSWORD,
+                client_ip="127.0.0.1",
+            )
+
+        async with self.session.begin():
+            attempts = await self.session.scalar(
+                select(func.count(AuthLoginAttempt.id))
+            )
+            self.assertEqual(attempts, 1)
+
+    async def test_inactive_user_cannot_login(self) -> None:
+        await self.service.register("0901234567", PASSWORD)
+        async with self.session.begin():
+            user = await self._only_user()
+            user.is_active = False
+
+        with self.assertRaises(InvalidCredentials):
+            await self.service.login("0901234567", PASSWORD)
 
     async def test_refresh_rotation_detects_replay_and_revokes_session(
         self,
     ) -> None:
-        request = await self.service.request_otp("0901234567")
-        authenticated = await self.service.verify_otp(
-            request.challenge_id,
-            self.provider.deliveries[-1][1],
-        )
-        original_refresh = authenticated.tokens.refresh_token
+        registered = await self.service.register("0901234567", PASSWORD)
+        original_refresh = registered.tokens.refresh_token
         rotated = await self.service.refresh(original_refresh)
 
         await self.service.authenticate_access_token(rotated.tokens.access_token)
@@ -198,101 +221,21 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.authenticate_access_token(rotated.tokens.access_token)
 
     async def test_logout_revokes_access_and_is_idempotent(self) -> None:
-        request = await self.service.request_otp("0901234567")
-        authenticated = await self.service.verify_otp(
-            request.challenge_id,
-            self.provider.deliveries[-1][1],
-        )
+        registered = await self.service.register("0901234567", PASSWORD)
 
         self.assertTrue(
-            await self.service.revoke_refresh_token(authenticated.tokens.refresh_token)
+            await self.service.revoke_refresh_token(registered.tokens.refresh_token)
         )
         self.assertTrue(
-            await self.service.revoke_refresh_token(authenticated.tokens.refresh_token)
+            await self.service.revoke_refresh_token(registered.tokens.refresh_token)
         )
         with self.assertRaises(RevokedAuthSession):
-            await self.service.authenticate_access_token(
-                authenticated.tokens.access_token
-            )
+            await self.service.authenticate_access_token(registered.tokens.access_token)
 
-    async def test_cooldown_and_phone_window_rate_limit(self) -> None:
-        await self.service.request_otp("0901234567")
-        with self.assertRaises(OtpCooldown):
-            await self.service.request_otp("0901234567")
-
-        for _ in range(4):
-            self.clock.advance(seconds=61)
-            await self.service.request_otp("0901234567")
-
-        self.clock.advance(seconds=61)
-        with self.assertRaises(OtpRateLimited):
-            await self.service.request_otp("0901234567")
-
-    async def test_resend_invalidates_the_previous_challenge(self) -> None:
-        first = await self.service.request_otp("0901234567")
-        first_code = self.provider.deliveries[-1][1]
-        self.clock.advance(seconds=61)
-        second = await self.service.request_otp("0901234567")
-        second_code = self.provider.deliveries[-1][1]
-
-        with self.assertRaises(OtpChallengeConsumed):
-            await self.service.verify_otp(first.challenge_id, first_code)
-        authenticated = await self.service.verify_otp(
-            second.challenge_id,
-            second_code,
-        )
-        self.assertTrue(authenticated.is_new_user)
-
-    async def test_ip_window_rate_limit_uses_only_digest(self) -> None:
-        ip_address = "10.0.0.8"
-        ip_digest = client_ip_digest(ip_address)
-        async with self.session.begin():
-            self.session.add_all(
-                [
-                    OtpChallenge(
-                        id=uuid.uuid4(),
-                        phone_e164="+84999999999",
-                        request_ip_digest=ip_digest,
-                        code_digest="0" * 64,
-                        expires_at=self.clock.current + timedelta(minutes=5),
-                        attempts_remaining=5,
-                        resend_available_at=self.clock.current,
-                        consumed_at=self.clock.current,
-                        created_at=self.clock.current,
-                        updated_at=self.clock.current,
-                    )
-                    for _ in range(OTP_IP_RATE_LIMIT_COUNT)
-                ]
-            )
-
-        with self.assertRaises(OtpRateLimited):
-            await self.service.request_otp(
-                "0912345678",
-                client_ip=ip_address,
-            )
-
-    async def test_delivery_failure_consumes_challenge_without_cooldown(
-        self,
-    ) -> None:
-        failing_provider = CaptureOtpProvider(fail=True)
-        service = AuthService(
-            self.session,
-            otp_provider=failing_provider,
-            clock=self.clock,
-        )
-        with self.assertRaises(OtpDeliveryError):
-            await service.request_otp("0901234567")
-
-        async with self.session.begin():
-            challenge = await self.session.scalar(
-                select(OtpChallenge).order_by(OtpChallenge.created_at.desc())
-            )
-            assert challenge is not None
-            self.assertIsNotNone(challenge.consumed_at)
-            self.assertEqual(
-                challenge.resend_available_at,
-                challenge.consumed_at,
-            )
+    async def _only_user(self) -> User:
+        user = await self.session.scalar(select(User))
+        assert user is not None
+        return user
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Phone OTP and JWT authentication domain services."""
+"""Phone/password and JWT authentication domain services."""
 
 from .phone import mask_phone, normalize_phone
 from .security import TokenClaims, TokenPair

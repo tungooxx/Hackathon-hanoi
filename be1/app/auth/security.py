@@ -1,19 +1,21 @@
-"""Cryptographic primitives for OTPs, rate-limit identifiers, and JWTs."""
+"""Cryptographic primitives for passwords, rate-limit identifiers, and JWTs."""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
 import ipaddress
-import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 import jwt
+from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
 
 from app.config import (
+    AUTH_RATE_LIMIT_SECRET,
     AUTH_TOKEN_DIGEST_SECRET,
     JWT_ACCESS_TTL_SECONDS,
     JWT_ALGORITHM,
@@ -22,14 +24,16 @@ from app.config import (
     JWT_LEEWAY_SECONDS,
     JWT_REFRESH_TTL_SECONDS,
     JWT_SECRET_KEY,
-    OTP_DIGITS,
-    OTP_HMAC_SECRET,
     validate_auth_config,
 )
 
 from .exceptions import ExpiredToken, InvalidToken
 
 TokenType = Literal["access", "refresh"]
+_password_hash = PasswordHash.recommended()
+_dummy_password_hash = _password_hash.hash(
+    "dummy-password-used-only-to-equalize-login-work"
+)
 
 
 @dataclass(frozen=True)
@@ -55,41 +59,50 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def generate_otp(*, digits: int = OTP_DIGITS) -> str:
-    """Generate a zero-padded code with the OS cryptographic RNG."""
+def hash_password(password: str) -> str:
+    """Hash a password with pwdlib's recommended Argon2 settings."""
 
-    if not 4 <= digits <= 10:
-        raise ValueError("OTP digits must be between 4 and 10")
-    return f"{secrets.randbelow(10**digits):0{digits}d}"
+    return _password_hash.hash(password)
 
 
-def otp_digest(
-    challenge_id: uuid.UUID,
-    phone_e164: str,
-    code: str,
-) -> str:
+def verify_and_update_password(
+    password: str,
+    password_hash: str | None,
+) -> tuple[bool, str | None]:
+    """Verify a password and return a replacement hash when parameters age."""
+
+    candidate_hash = password_hash or _dummy_password_hash
+    try:
+        valid, updated_hash = _password_hash.verify_and_update(
+            password,
+            candidate_hash,
+        )
+    except UnknownHashError:
+        return False, None
+    if password_hash is None:
+        return False, None
+    return valid, updated_hash
+
+
+def verify_password(password: str, password_hash: str | None) -> bool:
+    return verify_and_update_password(password, password_hash)[0]
+
+
+def phone_login_digest(phone_e164: str) -> str:
+    """Key rate limits without retaining another copy of the phone number."""
+
     return _hmac_digest(
-        OTP_HMAC_SECRET,
-        "otp",
-        f"{challenge_id}:{phone_e164}:{code}",
+        AUTH_RATE_LIMIT_SECRET,
+        "login-phone",
+        phone_e164,
     )
-
-
-def otp_matches(
-    challenge_id: uuid.UUID,
-    phone_e164: str,
-    code: str,
-    expected_digest: str,
-) -> bool:
-    actual = otp_digest(challenge_id, phone_e164, code)
-    return hmac.compare_digest(actual, expected_digest)
 
 
 def client_ip_digest(client_ip: str) -> str:
     """Return a stable HMAC digest without retaining the raw client IP."""
 
     normalized = ipaddress.ip_address(client_ip.strip()).compressed
-    return _hmac_digest(OTP_HMAC_SECRET, "client-ip", normalized)
+    return _hmac_digest(AUTH_RATE_LIMIT_SECRET, "client-ip", normalized)
 
 
 def refresh_token_digest(token: str) -> str:

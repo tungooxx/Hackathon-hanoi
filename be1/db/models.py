@@ -12,7 +12,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     MetaData,
-    SmallInteger,
     String,
     Uuid,
     func,
@@ -72,6 +71,10 @@ class User(TimestampMixin, Base):
         nullable=False,
         unique=True,
     )
+    password_hash: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -90,26 +93,21 @@ class User(TimestampMixin, Base):
     )
 
 
-class OtpChallenge(TimestampMixin, Base):
-    """A short-lived, hashed phone-verification challenge."""
+class AuthLoginAttempt(Base):
+    """A privacy-preserving record used to throttle failed logins."""
 
-    __tablename__ = "otp_challenges"
+    __tablename__ = "auth_login_attempts"
     __table_args__ = (
-        CheckConstraint(
-            "phone_e164 ~ '^\\+[1-9][0-9]{7,14}$'",
-            name="phone_e164_format",
-        ),
-        CheckConstraint(
-            "attempts_remaining >= 0",
-            name="attempts_remaining_nonnegative",
-        ),
-        Index("ix_otp_challenges_phone_created", "phone_e164", "created_at"),
         Index(
-            "ix_otp_challenges_ip_created",
+            "ix_auth_login_attempts_phone_created",
+            "phone_digest",
+            "created_at",
+        ),
+        Index(
+            "ix_auth_login_attempts_ip_created",
             "request_ip_digest",
             "created_at",
         ),
-        Index("ix_otp_challenges_expires_at", "expires_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -117,29 +115,15 @@ class OtpChallenge(TimestampMixin, Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    phone_e164: Mapped[str] = mapped_column(String(16), nullable=False)
+    phone_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     request_ip_digest: Mapped[str | None] = mapped_column(
         String(64),
         nullable=True,
     )
-    code_digest: Mapped[str] = mapped_column(String(64), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-    )
-    attempts_remaining: Mapped[int] = mapped_column(
-        SmallInteger,
-        nullable=False,
-        default=5,
-        server_default=text("5"),
-    )
-    resend_available_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-    )
-    consumed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
+        server_default=func.now(),
     )
 
 

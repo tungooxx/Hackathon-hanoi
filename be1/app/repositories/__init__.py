@@ -1,12 +1,12 @@
 """Persistence boundaries used by application services."""
 
 from .auth_sessions import AuthSessionRepository
-from .otp_challenges import OtpChallengeRepository, RateWindowStats
+from .login_attempts import LoginAttemptRepository, RateWindowStats
 from .users import UserRepository
 
 __all__ = [
     "AuthSessionRepository",
-    "OtpChallengeRepository",
+    "LoginAttemptRepository",
     "RateWindowStats",
     "UserRepository",
 ]

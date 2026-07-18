@@ -24,7 +24,8 @@ PostgreSQL lưu dữ liệu bền vững của ứng dụng; Elasticsearch vẫn
 tìm kiếm sản phẩm. Schema hiện tại gồm:
 
 - `users`: danh tính ổn định theo UUID, số điện thoại E.164 là duy nhất.
-- `otp_challenges`: chỉ lưu digest của OTP, thời hạn và số lần thử còn lại.
+- `users.password_hash`: Argon2 hash; mật khẩu gốc không được lưu.
+- `auth_login_attempts`: chỉ lưu HMAC digest phục vụ giới hạn đăng nhập sai.
 - `auth_sessions`: chỉ lưu digest của refresh token, có thể revoke theo session.
 
 Sau khi đổi model trong `db/models.py`, tạo và kiểm tra migration:
@@ -35,28 +36,59 @@ uv run alembic upgrade head
 uv run alembic current --check-heads
 ```
 
-## Phone authentication service
+## Phone/password authentication service
 
 The backend service layer is implemented under `app/auth/` and
 `app/repositories/`. It currently provides:
 
 - Vietnamese phone normalization to E.164.
-- Cryptographically generated OTPs stored only as HMAC digests.
-- Resend cooldowns and rolling phone/IP request limits.
-- Persisted verification-attempt limits, expiry, and replay prevention.
+- Argon2 password hashing through `pwdlib`; plaintext passwords are never stored.
+- Registration with phone, password, and password confirmation.
+- Generic invalid-credential responses and a dummy-hash check for unknown phones.
+- Persisted rolling phone/IP limits for failed login attempts.
 - Access/refresh JWT pairs bound to a revocable database session.
 - Refresh-token rotation with replay detection.
 - Access-token authentication and idempotent logout revocation.
 
-`OTP_PROVIDER=console` prints a masked phone number and OTP for local
-development. It is rejected when `APP_ENV=production`; configure a real SMS
-adapter before deploying. HTTP authentication routes and cookies are added in
-the next implementation phase.
+No OTP or SMS provider is required. Password reset/recovery is intentionally
+outside the current authentication phase.
 
 Run the service and security tests against the local PostgreSQL container:
 
 ```bash
 uv run python -m unittest discover -s tests -v
+```
+
+### Authentication API
+
+| Endpoint | Body/session | Result |
+|---|---|---|
+| `POST /auth/register` | Phone, password, password confirmation | Creates the user and sets access/refresh cookies |
+| `POST /auth/login` | Phone and password | Verifies credentials and sets access/refresh cookies |
+| `POST /auth/refresh` | Refresh cookie | Rotated access/refresh cookies |
+| `GET /auth/me` | Access cookie | Current authenticated user |
+| `POST /auth/logout` | Refresh cookie when present | Revokes the session and clears both cookies |
+
+JWTs are never returned in JSON. The access cookie is available to the whole
+application, while the refresh cookie is restricted to `/auth`. Both are
+`HttpOnly` and `SameSite=Lax`; production configuration also requires
+`Secure`.
+
+Frontend requests must use `credentials: "include"` and an origin listed in
+`FRONTEND_ORIGINS`. During local development, use matching hostnames on both
+sides—for example, `http://localhost:5173` with
+`http://localhost:8100`—because `localhost` and `127.0.0.1` are different
+cookie sites.
+
+Expected authentication errors use:
+
+```json
+{
+  "error": {
+    "code": "invalid_credentials",
+    "message": "Số điện thoại hoặc mật khẩu không đúng."
+  }
+}
 ```
 
 ## API cho FE

@@ -1,4 +1,4 @@
-"""Transactional phone OTP and JWT authentication workflows."""
+"""Transactional phone/password and JWT authentication workflows."""
 
 from __future__ import annotations
 
@@ -8,52 +8,48 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from anyio import to_thread
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import (
-    OTP_IP_RATE_LIMIT_COUNT,
-    OTP_MAX_ATTEMPTS,
-    OTP_PHONE_RATE_LIMIT_COUNT,
-    OTP_RATE_LIMIT_WINDOW_SECONDS,
-    OTP_RESEND_COOLDOWN_SECONDS,
-    OTP_TTL_SECONDS,
+    LOGIN_IP_RATE_LIMIT_COUNT,
+    LOGIN_PHONE_RATE_LIMIT_COUNT,
+    LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
     validate_auth_config,
 )
 from app.repositories import (
     AuthSessionRepository,
-    OtpChallengeRepository,
+    LoginAttemptRepository,
     RateWindowStats,
     UserRepository,
 )
-from db.models import AuthSession, OtpChallenge, User
+from db.models import AuthSession, User
 
 from .exceptions import (
     InactiveUser,
-    InvalidOtpCode,
+    InvalidCredentials,
     InvalidToken,
-    OtpChallengeConsumed,
-    OtpChallengeExpired,
-    OtpChallengeNotFound,
-    OtpCooldown,
-    OtpDeliveryError,
-    OtpRateLimited,
+    LoginRateLimited,
+    PhoneAlreadyRegistered,
     RevokedAuthSession,
+    WeakPassword,
 )
-from .otp_provider import OtpProvider, build_otp_provider
-from .phone import mask_phone, normalize_phone
+from .phone import normalize_phone
 from .security import (
     TokenPair,
     advisory_lock_key,
     client_ip_digest,
     create_token_pair,
     decode_token,
-    generate_otp,
-    otp_digest,
-    otp_matches,
+    hash_password,
+    phone_login_digest,
     refresh_token_digest,
     refresh_token_matches,
     utc_now,
+    verify_and_update_password,
 )
 
 
@@ -65,15 +61,6 @@ class UserIdentity:
 
 
 @dataclass(frozen=True)
-class OtpRequestResult:
-    challenge_id: uuid.UUID
-    phone_e164: str
-    masked_phone: str
-    expires_at: datetime
-    resend_available_at: datetime
-
-
-@dataclass(frozen=True)
 class AuthenticationResult:
     user: UserIdentity
     tokens: TokenPair
@@ -81,172 +68,113 @@ class AuthenticationResult:
 
 
 class AuthService:
-    """Coordinate repositories, security primitives, and OTP delivery."""
+    """Coordinate password verification and revocable JWT sessions."""
 
     def __init__(
         self,
         session: AsyncSession,
         *,
-        otp_provider: OtpProvider | None = None,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         validate_auth_config()
         self.session = session
-        self.otp_provider = otp_provider or build_otp_provider()
         self.clock = clock
         self.users = UserRepository(session)
-        self.otp_challenges = OtpChallengeRepository(session)
+        self.login_attempts = LoginAttemptRepository(session)
         self.auth_sessions = AuthSessionRepository(session)
 
-    async def request_otp(
+    async def register(
         self,
         raw_phone: str,
-        *,
-        client_ip: str | None = None,
-    ) -> OtpRequestResult:
-        """Create, persist, and deliver a rate-limited OTP challenge."""
+        password: str,
+    ) -> AuthenticationResult:
+        """Create a phone/password user and immediately start a session."""
 
         phone_e164 = normalize_phone(raw_phone)
+        self._validate_registration_password(password)
+        password_hash = await to_thread.run_sync(hash_password, password)
+        now = self._now()
+
+        async with self.session.begin():
+            await self._acquire_advisory_locks([f"register:{phone_e164}"])
+            if await self.users.get_by_phone(phone_e164) is not None:
+                raise PhoneAlreadyRegistered("Phone number is already registered")
+
+            user = await self.users.create(
+                phone_e164,
+                password_hash=password_hash,
+                now=now,
+            )
+            user.last_login_at = now
+            user.updated_at = now
+            result = await self._create_authentication_result(
+                user,
+                now=now,
+                is_new_user=True,
+            )
+
+        return result
+
+    async def login(
+        self,
+        raw_phone: str,
+        password: str,
+        *,
+        client_ip: str | None = None,
+    ) -> AuthenticationResult:
+        """Verify a phone/password pair and start a rate-limited session."""
+
+        phone_e164 = normalize_phone(raw_phone)
+        if not isinstance(password, str):
+            raise InvalidCredentials("Invalid phone or password")
+
+        phone_digest = phone_login_digest(phone_e164)
         request_ip_digest = (
             client_ip_digest(client_ip) if client_ip is not None else None
         )
         now = self._now()
-        window_start = now - timedelta(seconds=OTP_RATE_LIMIT_WINDOW_SECONDS)
-        challenge_id = uuid.uuid4()
-        code = generate_otp()
-        challenge = OtpChallenge(
-            id=challenge_id,
-            phone_e164=phone_e164,
-            request_ip_digest=request_ip_digest,
-            code_digest=otp_digest(challenge_id, phone_e164, code),
-            expires_at=now + timedelta(seconds=OTP_TTL_SECONDS),
-            attempts_remaining=OTP_MAX_ATTEMPTS,
-            resend_available_at=now + timedelta(seconds=OTP_RESEND_COOLDOWN_SECONDS),
-            created_at=now,
-            updated_at=now,
-        )
+        window_start = now - timedelta(seconds=LOGIN_RATE_LIMIT_WINDOW_SECONDS)
+        failure: Exception | None = None
+        result: AuthenticationResult | None = None
 
-        lock_identities = [f"otp-phone:{phone_e164}"]
+        lock_identities = [f"login-phone:{phone_digest}"]
         if request_ip_digest is not None:
-            lock_identities.append(f"otp-ip:{request_ip_digest}")
+            lock_identities.append(f"login-ip:{request_ip_digest}")
 
         async with self.session.begin():
             await self._acquire_advisory_locks(lock_identities)
-            await self._enforce_request_limits(
-                phone_e164,
+            await self._enforce_login_limits(
+                phone_digest,
                 request_ip_digest=request_ip_digest,
                 window_start=window_start,
                 now=now,
             )
-            await self.otp_challenges.invalidate_active_for_phone(
-                phone_e164,
-                consumed_at=now,
+
+            user = await self.users.get_by_phone(phone_e164)
+            stored_hash = user.password_hash if user is not None else None
+            valid, updated_hash = await to_thread.run_sync(
+                verify_and_update_password,
+                password,
+                stored_hash,
             )
-            self.otp_challenges.add(challenge)
-            await self.session.flush()
 
-        try:
-            await self.otp_provider.send_otp(
-                phone_e164,
-                code,
-                expires_in_seconds=OTP_TTL_SECONDS,
-            )
-        except Exception as exc:
-            await self._invalidate_failed_delivery(challenge_id)
-            if isinstance(exc, OtpDeliveryError):
-                raise
-            raise OtpDeliveryError("OTP delivery failed") from exc
-
-        return OtpRequestResult(
-            challenge_id=challenge.id,
-            phone_e164=phone_e164,
-            masked_phone=mask_phone(phone_e164),
-            expires_at=challenge.expires_at,
-            resend_available_at=challenge.resend_available_at,
-        )
-
-    async def verify_otp(
-        self,
-        challenge_id: uuid.UUID | str,
-        code: str,
-    ) -> AuthenticationResult:
-        """Consume a valid OTP and create a user authentication session."""
-
-        parsed_challenge_id = self._parse_challenge_id(challenge_id)
-        now = self._now()
-        failure: Exception | None = None
-        result: AuthenticationResult | None = None
-
-        async with self.session.begin():
-            challenge_phone = await self.otp_challenges.get_phone(parsed_challenge_id)
-            if challenge_phone is None:
-                raise OtpChallengeNotFound("OTP challenge was not found")
-
-            await self._acquire_advisory_locks([f"otp-phone:{challenge_phone}"])
-            challenge = await self.otp_challenges.get_by_id(
-                parsed_challenge_id,
-                for_update=True,
-            )
-            if challenge is None:
-                raise OtpChallengeNotFound("OTP challenge was not found")
-
-            if challenge.consumed_at is not None:
-                raise OtpChallengeConsumed("OTP challenge is already consumed")
-
-            if challenge.expires_at <= now:
-                challenge.consumed_at = now
-                challenge.updated_at = now
-                failure = OtpChallengeExpired("OTP challenge has expired")
-            elif not otp_matches(
-                challenge.id,
-                challenge.phone_e164,
-                code.strip() if isinstance(code, str) else "",
-                challenge.code_digest,
-            ):
-                challenge.attempts_remaining = max(
-                    0,
-                    challenge.attempts_remaining - 1,
+            if user is None or not valid:
+                self.login_attempts.add_failure(
+                    phone_digest,
+                    request_ip_digest=request_ip_digest,
+                    created_at=now,
                 )
-                challenge.updated_at = now
-                if challenge.attempts_remaining == 0:
-                    challenge.consumed_at = now
-                failure = InvalidOtpCode(challenge.attempts_remaining)
+                await self.session.flush()
+                failure = InvalidCredentials("Invalid phone or password")
+            elif not user.is_active:
+                failure = InvalidCredentials("Invalid phone or password")
             else:
-                challenge.consumed_at = now
-                challenge.updated_at = now
-                user, is_new_user = await self.users.get_or_create_by_phone(
-                    challenge.phone_e164,
-                    now=now,
-                )
-                if not user.is_active:
-                    failure = InactiveUser("User is inactive")
-                else:
-                    user.last_login_at = now
-                    user.updated_at = now
-                    session_id = uuid.uuid4()
-                    tokens = create_token_pair(
-                        user.id,
-                        session_id,
-                        now=now,
-                    )
-                    self.auth_sessions.add(
-                        AuthSession(
-                            id=session_id,
-                            user_id=user.id,
-                            refresh_token_digest=refresh_token_digest(
-                                tokens.refresh_token
-                            ),
-                            expires_at=tokens.refresh_expires_at,
-                            created_at=now,
-                            updated_at=now,
-                        )
-                    )
-                    await self.session.flush()
-                    result = AuthenticationResult(
-                        user=self._identity(user),
-                        tokens=tokens,
-                        is_new_user=is_new_user,
-                    )
+                if updated_hash is not None:
+                    user.password_hash = updated_hash
+                user.last_login_at = now
+                user.updated_at = now
+                await self.login_attempts.clear_phone_failures(phone_digest)
+                result = await self._create_authentication_result(user, now=now)
 
         if failure is not None:
             raise failure
@@ -367,48 +295,54 @@ class AuthService:
                 )
             return True
 
-    async def _enforce_request_limits(
+    async def _create_authentication_result(
         self,
-        phone_e164: str,
+        user: User,
+        *,
+        now: datetime,
+        is_new_user: bool = False,
+    ) -> AuthenticationResult:
+        session_id = uuid.uuid4()
+        tokens = create_token_pair(user.id, session_id, now=now)
+        self.auth_sessions.add(
+            AuthSession(
+                id=session_id,
+                user_id=user.id,
+                refresh_token_digest=refresh_token_digest(tokens.refresh_token),
+                expires_at=tokens.refresh_expires_at,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await self.session.flush()
+        return AuthenticationResult(
+            user=self._identity(user),
+            tokens=tokens,
+            is_new_user=is_new_user,
+        )
+
+    async def _enforce_login_limits(
+        self,
+        phone_digest: str,
         *,
         request_ip_digest: str | None,
         window_start: datetime,
         now: datetime,
     ) -> None:
-        latest = await self.otp_challenges.latest_for_phone(phone_e164)
-        if latest is not None and latest.resend_available_at > now:
-            raise OtpCooldown(self._seconds_until(latest.resend_available_at, now))
-
-        phone_stats = await self.otp_challenges.phone_window_stats(
-            phone_e164,
+        phone_stats = await self.login_attempts.phone_window_stats(
+            phone_digest,
             since=window_start,
         )
-        if phone_stats.count >= OTP_PHONE_RATE_LIMIT_COUNT:
-            raise OtpRateLimited(self._window_retry_after(phone_stats, now))
+        if phone_stats.count >= LOGIN_PHONE_RATE_LIMIT_COUNT:
+            raise LoginRateLimited(self._window_retry_after(phone_stats, now))
 
         if request_ip_digest is not None:
-            ip_stats = await self.otp_challenges.ip_window_stats(
+            ip_stats = await self.login_attempts.ip_window_stats(
                 request_ip_digest,
                 since=window_start,
             )
-            if ip_stats.count >= OTP_IP_RATE_LIMIT_COUNT:
-                raise OtpRateLimited(self._window_retry_after(ip_stats, now))
-
-    async def _invalidate_failed_delivery(
-        self,
-        challenge_id: uuid.UUID,
-    ) -> None:
-        failed_at = self._now()
-        async with self.session.begin():
-            challenge = await self.otp_challenges.get_by_id(
-                challenge_id,
-                for_update=True,
-            )
-            if challenge is not None and challenge.consumed_at is None:
-                challenge.consumed_at = failed_at
-                challenge.resend_available_at = failed_at
-                challenge.updated_at = failed_at
-                await self.session.flush()
+            if ip_stats.count >= LOGIN_IP_RATE_LIMIT_COUNT:
+                raise LoginRateLimited(self._window_retry_after(ip_stats, now))
 
     async def _acquire_advisory_locks(
         self,
@@ -418,32 +352,24 @@ class AuthService:
         for lock_key in lock_keys:
             await self.session.execute(select(func.pg_advisory_xact_lock(lock_key)))
 
+    @staticmethod
+    def _validate_registration_password(password: str) -> None:
+        if not isinstance(password, str) or not (
+            PASSWORD_MIN_LENGTH <= len(password) <= PASSWORD_MAX_LENGTH
+        ):
+            raise WeakPassword("Password does not satisfy the configured length")
+
+    @staticmethod
     def _window_retry_after(
-        self,
         stats: RateWindowStats,
         now: datetime,
     ) -> int:
         if stats.oldest_at is None:
-            return OTP_RATE_LIMIT_WINDOW_SECONDS
+            return LOGIN_RATE_LIMIT_WINDOW_SECONDS
         available_at = stats.oldest_at + timedelta(
-            seconds=OTP_RATE_LIMIT_WINDOW_SECONDS
+            seconds=LOGIN_RATE_LIMIT_WINDOW_SECONDS
         )
-        return self._seconds_until(available_at, now)
-
-    @staticmethod
-    def _seconds_until(available_at: datetime, now: datetime) -> int:
         return max(1, math.ceil((available_at - now).total_seconds()))
-
-    @staticmethod
-    def _parse_challenge_id(
-        challenge_id: uuid.UUID | str,
-    ) -> uuid.UUID:
-        if isinstance(challenge_id, uuid.UUID):
-            return challenge_id
-        try:
-            return uuid.UUID(challenge_id)
-        except (AttributeError, TypeError, ValueError) as exc:
-            raise OtpChallengeNotFound("OTP challenge identifier is invalid") from exc
 
     def _now(self) -> datetime:
         now = self.clock()

@@ -31,22 +31,21 @@ class UserRepository:
         )
         return await self.session.scalar(statement)
 
-    async def get_or_create_by_phone(
+    async def create(
         self,
         phone_e164: str,
         *,
+        password_hash: str,
         now: datetime,
-    ) -> tuple[User, bool]:
-        user = await self.get_by_phone(phone_e164)
-        created = user is None
-        if user is None:
-            user = User(
-                phone_e164=phone_e164,
-                is_active=True,
-                last_login_at=None,
-                created_at=now,
-                updated_at=now,
-            )
-            self.session.add(user)
+    ) -> User:
+        user = User(
+            phone_e164=phone_e164,
+            password_hash=password_hash,
+            is_active=True,
+            last_login_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(user)
         await self.session.flush()
-        return user, created
+        return user

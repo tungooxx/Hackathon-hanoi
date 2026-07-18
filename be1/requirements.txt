@@ -12,3 +12,4 @@ asyncpg
 alembic
 PyJWT
 phonenumbers
+pwdlib[argon2]

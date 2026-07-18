@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import uuid
 import unittest
+import uuid
 from datetime import timedelta
 
 from app.auth.exceptions import ExpiredToken, InvalidPhoneNumber, InvalidToken
@@ -10,12 +10,13 @@ from app.auth.security import (
     client_ip_digest,
     create_token_pair,
     decode_token,
-    generate_otp,
-    otp_digest,
-    otp_matches,
+    hash_password,
+    phone_login_digest,
     refresh_token_digest,
     refresh_token_matches,
     utc_now,
+    verify_and_update_password,
+    verify_password,
 )
 
 
@@ -34,27 +35,31 @@ class PhoneTests(unittest.TestCase):
 
 
 class SecurityTests(unittest.TestCase):
-    def test_otp_generation_and_context_bound_digest(self) -> None:
-        challenge_id = uuid.uuid4()
-        phone = "+84901234567"
-        code = generate_otp()
+    def test_passwords_use_salted_argon2_hashes(self) -> None:
+        password = "Correct Horse Battery Staple"
+        first = hash_password(password)
+        second = hash_password(password)
 
-        self.assertRegex(code, r"^[0-9]{6}$")
-        digest = otp_digest(challenge_id, phone, code)
-        self.assertEqual(len(digest), 64)
-        self.assertNotIn(code, digest)
-        self.assertTrue(otp_matches(challenge_id, phone, code, digest))
-        self.assertFalse(otp_matches(challenge_id, phone, "000000", digest))
-        self.assertNotEqual(
-            digest,
-            otp_digest(uuid.uuid4(), phone, code),
+        self.assertTrue(first.startswith("$argon2"))
+        self.assertNotEqual(first, second)
+        self.assertNotIn(password, first)
+        self.assertTrue(verify_password(password, first))
+        self.assertFalse(verify_password("incorrect password", first))
+        self.assertFalse(verify_password(password, None))
+        self.assertEqual(
+            verify_and_update_password(password, "not-a-valid-hash"),
+            (False, None),
         )
 
-    def test_ip_and_refresh_secrets_use_stable_hmac_digests(self) -> None:
+    def test_rate_limit_and_refresh_values_use_stable_hmac_digests(self) -> None:
         self.assertEqual(
             client_ip_digest("2001:db8::1"),
             client_ip_digest("2001:0db8:0:0:0:0:0:1"),
         )
+        phone_digest = phone_login_digest("+84901234567")
+        self.assertEqual(len(phone_digest), 64)
+        self.assertNotIn("901234567", phone_digest)
+
         token = "refresh-token-value"
         digest = refresh_token_digest(token)
         self.assertEqual(len(digest), 64)
@@ -76,9 +81,9 @@ class SecurityTests(unittest.TestCase):
         with self.assertRaises(InvalidToken):
             decode_token(tokens.access_token, "refresh")
 
-        tampered = tokens.access_token[:-1] + (
-            "a" if tokens.access_token[-1] != "a" else "b"
-        )
+        header, payload, signature = tokens.access_token.split(".")
+        signature = ("a" if signature[0] != "a" else "b") + signature[1:]
+        tampered = ".".join((header, payload, signature))
         with self.assertRaises(InvalidToken):
             decode_token(tampered, "access")
 

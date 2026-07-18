@@ -12,15 +12,15 @@ from .elasticsearch import (
     elasticsearch,
     get_elasticsearch,
 )
-from .models import AuthSession, Base, OtpChallenge, User
+from .models import AuthLoginAttempt, AuthSession, Base, User
 from .postgres import PostgresDatabase, get_db_session, get_postgres, postgres
 
 __all__ = [
+    "AuthLoginAttempt",
     "AuthSession",
     "Base",
     "ElasticsearchClient",
     "ElasticsearchRequestError",
-    "OtpChallenge",
     "PostgresDatabase",
     "User",
     "elasticsearch",
