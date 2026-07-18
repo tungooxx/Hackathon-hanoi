@@ -1,0 +1,14 @@
+# Server-side continuous deployment: pulls origin/main and redeploys if changed.
+# Install to /etc/systemd/system/ (see deploy/README.md). Runs as the repo owner.
+[Unit]
+Description=DMX Advisor auto-deploy (poll origin/main and redeploy on change)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Hackathon-hanoi
+ExecStart=/home/ubuntu/Hackathon-hanoi/deploy/auto-deploy.sh main
+TimeoutStartSec=1800

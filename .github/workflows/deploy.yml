@@ -1,0 +1,51 @@
+name: Deploy to server
+
+# Push-triggered deployment to the "my-assistant" server.
+#
+# Requires these repository secrets (Settings → Secrets and variables → Actions):
+#   SSH_HOST         server IP/hostname (e.g. 152.69.215.43)
+#   SSH_USER         ssh user (e.g. ubuntu)
+#   SSH_PRIVATE_KEY  contents of the deploy private key
+#   SSH_PASSPHRASE   passphrase for the private key (omit if key has none)
+#   BE1_ENV          full contents of be1/.env for production
+#   DEPLOY_ENV_PROD  full contents of deploy/.env.prod
+#
+# The server keeps be1/.env and deploy/.env.prod as gitignored files; this
+# workflow refreshes them from secrets on every deploy, then runs deploy.sh.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          command_timeout: 30m
+          envs: BE1_ENV,DEPLOY_ENV_PROD
+          script: |
+            set -euo pipefail
+            REPO_DIR="$HOME/Hackathon-hanoi"
+            cd "$REPO_DIR"
+            printf '%s' "$BE1_ENV" > be1/.env
+            printf '%s' "$DEPLOY_ENV_PROD" > deploy/.env.prod
+            chmod 600 be1/.env deploy/.env.prod
+            git fetch --prune origin
+            git checkout -B main origin/main
+            git reset --hard origin/main
+            bash deploy/deploy.sh main
+        env:
+          BE1_ENV: ${{ secrets.BE1_ENV }}
+          DEPLOY_ENV_PROD: ${{ secrets.DEPLOY_ENV_PROD }}

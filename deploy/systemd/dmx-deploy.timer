@@ -1,0 +1,12 @@
+# Fires dmx-deploy.service every 2 minutes to poll for new commits on origin/main.
+[Unit]
+Description=Poll origin/main and redeploy DMX Advisor
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=dmx-deploy.service
+
+[Install]
+WantedBy=timers.target

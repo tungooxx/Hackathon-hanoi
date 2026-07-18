@@ -1,0 +1,96 @@
+# Production stack for DMX Advisor (deployed on "my-assistant").
+# Run from repo root:
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --build
+#
+# Services:
+#   postgres       persistent app data + LangGraph checkpoints
+#   elasticsearch  product search index
+#   qdrant         policy RAG vectors
+#   backend        FastAPI (be1) — internal only, reached via nginx
+#   frontend       React SPA + nginx reverse proxy, published on :80
+name: dmx-advisor
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-be1}
+      POSTGRES_USER: ${POSTGRES_USER:-be1}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    stop_grace_period: 30s
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.2
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    mem_limit: ${ELASTICSEARCH_MEMORY_LIMIT:-2g}
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 1m
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    mem_limit: ${QDRANT_MEMORY_LIMIT:-1g}
+    stop_grace_period: 30s
+
+  backend:
+    build:
+      context: ../be1
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../be1/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8100/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    stop_grace_period: 30s
+
+  frontend:
+    build:
+      context: ../fe
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PUBLIC_HTTP_PORT:-80}:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  qdrant_data:
+    driver: local
