@@ -17,8 +17,6 @@ def _rank_score(products: list[dict], field: str, higher_better: bool) -> dict[s
 
 
 def rank_top3(candidates: list[dict], priorities: list[str]) -> list[dict]:
-    if len(candidates) <= 3:
-        return sorted(candidates, key=lambda p: p.get("price_sale") or 0)
     weights = {p: 1.0 / (i + 1) for i, p in enumerate(priorities)} or {"gia_re": 1.0}
     scores: dict[str, float] = {p["sku"]: 0.0 for p in candidates}
     for prio, w in weights.items():

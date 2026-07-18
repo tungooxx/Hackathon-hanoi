@@ -1,7 +1,7 @@
 # BE1 — DMX AI Advisor (core xử lý)
 
-Flow: `intent → retrieve → [hỏi ngược | so sánh top 3] | off-topic`, tối đa **2 lượt LLM/turn**
-(NLU structured + phrasing streaming), filter/ranking hoàn toàn deterministic.
+Flow: `intent → retrieve → [hỏi ngược | so sánh top 3] | RAG chính sách | off-topic`, tối đa
+**2 lượt LLM/turn** (NLU structured + phrasing streaming), filter/ranking hoàn toàn deterministic.
 
 ## Chạy
 
@@ -122,7 +122,8 @@ The message body is `{"message": "..."}`. The response stream contains:
 | `question` | `{slot, reason}` | đánh dấu turn hỏi ngược + lý do hỏi |
 | `text_chunk` | `{content}` | text bot, append dần |
 | `product_cards` | `{products: [...]}` | render 3 card sản phẩm |
-| `done` | `{turn_type: ask\|compare\|no_match\|off_topic}` | kết thúc turn |
+| `policy_sources` | `{sources: [{title, source, score}]}` | citation cho câu trả lời chính sách (RAG) |
+| `done` | `{turn_type: ask\|compare\|no_match\|policy\|off_topic}` | kết thúc turn |
 
 The API returns only the public `chat_sessions.id`. Every lookup also requires
 `chat_sessions.user_id == current_user.id`; another user's UUID returns the
@@ -145,6 +146,29 @@ messages until reload, but the server does not remember earlier guest turns.
 - Chưa có BE2: để `BE2_BASE_URL` rỗng → BE1 tự đọc `fixtures/`.
 - Fixture sinh từ excel gốc: `python scripts/make_fixture.py` (chỉ ~10 dòng máy lạnh có giá trong data mẫu).
 
+## RAG chính sách (`app/rag.py`)
+
+Câu hỏi về chính sách (bảo hành, đổi trả, giao hàng, khui hộp, điều khoản, dữ liệu cá nhân, nội quy)
+→ intent `policy` → `policy_node`: tìm top-k chunk từ `policy-files/*.md`, trả lời **grounded chỉ
+trong trích dẫn** (prompt `POLICY_SYSTEM`), kèm `policy_sources` để FE hiển thị nguồn. Điểm retrieval
+tốt nhất < `RAG_MIN_SCORE` → bot thú nhận "chưa có thông tin" thay vì bịa.
+
+- **Chunking**: gộp đoạn liền nhau tới ~800 ký tự, overlap 1 đoạn, gắn tên chính sách vào đầu chunk.
+- **Vector DB — Qdrant** (`db/qdrant.py`, cùng phong cách httpx REST với `db/elasticsearch.py`):
+  chunk được embed (OpenAI-compatible, cùng `base_url` với LLM — set `EMBED_MODEL` = tên model FPT
+  AI Factory) rồi upsert vào collection `policies`. Search = cosine top-k.
+- **Fallback**: `MOCK_LLM=1` hoặc `EMBED_MODEL` rỗng → tìm kiếm lexical (token overlap), chạy offline
+  không cần key/Qdrant — luồng vẫn hoạt động đầy đủ.
+
+```bash
+cd docker && docker compose up -d qdrant   # bật Qdrant (REST :6333)
+python scripts/build_policy_index.py       # build/refresh vào Qdrant (cần EMBED_MODEL)
+```
+
+Index build **lazily** ở lần hỏi chính sách đầu tiên; marker `logs/policy_qdrant.hash` (hash theo
+file + model) cho biết khi nào cần build lại. Thêm/sửa chính sách: bỏ file `.md` vào `policy-files/`
+→ hash đổi → tự build lại request kế tiếp. Tên hiển thị cho citation ở `_TITLES` của `app/rag.py`.
+
 ## Hợp đồng với ontology (Tùng)
 
 Thay `app/ontology_stub.py` bằng module thật, **giữ nguyên 2 signature**:
@@ -155,6 +179,23 @@ suggest_next_question(category, filled_slots, asked_slots, candidates) -> NextQu
 ```
 
 `NextQuestion.reason` sẽ hiển thị lên explainability panel — viết cho người đọc.
+
+## Adaptive Decision Ontology Engine
+
+`POST /api/v1/ontology/adapt` builds an adaptive profile from `../data/ontology_data.json` without mutating the reviewed seed. It loads ten reviewed category seeds plus the shared `Tất cả` core.
+
+- Exact seed → `REVIEWED`; related category → guarded `COMPOSED_*`; distant category → `GENERATED_DISTANT` with all new category-specific items marked `PROVISIONAL`.
+- Modules activate only when their own schema/sample evidence exists. A display does not automatically activate battery or portability.
+- Generated profiles persist in `be1/data/generated_categories.json`; use `/review/{profile_id}/approve` or `/reject` for human review.
+- `POST /api/v1/ontology/questions/next` returns at most one eligible Vietnamese question.
+
+Example request:
+
+```json
+{"category_name":"Tivi","raw_fields":["Kích thước màn hình","Độ phân giải","Cổng HDMI","Công nghệ âm thanh"]}
+```
+
+Run tests with `pytest tests/test_adaptive_ontology.py`.
 
 ## Turn log (input cho judge/eval)
 
