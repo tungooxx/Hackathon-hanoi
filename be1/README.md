@@ -46,17 +46,20 @@ trong trích dẫn** (prompt `POLICY_SYSTEM`), kèm `policy_sources` để FE hi
 tốt nhất < `RAG_MIN_SCORE` → bot thú nhận "chưa có thông tin" thay vì bịa.
 
 - **Chunking**: gộp đoạn liền nhau tới ~800 ký tự, overlap 1 đoạn, gắn tên chính sách vào đầu chunk.
-- **Retrieval**: embedding OpenAI-compatible (cùng `base_url` với LLM — set `EMBED_MODEL` là tên
-  model FPT AI Factory). Cache ở `logs/policy_index.json` (hash theo file + model, đổi là tự build lại).
+- **Vector DB — Qdrant** (`db/qdrant.py`, cùng phong cách httpx REST với `db/elasticsearch.py`):
+  chunk được embed (OpenAI-compatible, cùng `base_url` với LLM — set `EMBED_MODEL` = tên model FPT
+  AI Factory) rồi upsert vào collection `policies`. Search = cosine top-k.
 - **Fallback**: `MOCK_LLM=1` hoặc `EMBED_MODEL` rỗng → tìm kiếm lexical (token overlap), chạy offline
-  không cần key — luồng vẫn hoạt động đầy đủ.
+  không cần key/Qdrant — luồng vẫn hoạt động đầy đủ.
 
 ```bash
-python scripts/build_policy_index.py    # build/refresh index embedding (cần EMBED_MODEL + network)
+cd docker && docker compose up -d qdrant   # bật Qdrant (REST :6333)
+python scripts/build_policy_index.py       # build/refresh vào Qdrant (cần EMBED_MODEL)
 ```
 
-Thêm/sửa chính sách: bỏ file `.md` vào `policy-files/` → index tự build lại ở request kế tiếp
-(hash đổi). Đặt tên hiển thị đẹp cho citation trong `_TITLES` của `app/rag.py`.
+Index build **lazily** ở lần hỏi chính sách đầu tiên; marker `logs/policy_qdrant.hash` (hash theo
+file + model) cho biết khi nào cần build lại. Thêm/sửa chính sách: bỏ file `.md` vào `policy-files/`
+→ hash đổi → tự build lại request kế tiếp. Tên hiển thị cho citation ở `_TITLES` của `app/rag.py`.
 
 ## Hợp đồng với ontology (Tùng)
 

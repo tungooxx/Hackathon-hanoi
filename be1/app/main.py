@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from db import elasticsearch
+from db import elasticsearch, qdrant
 
 from .graph import graph
 from .schemas import ChatRequest
@@ -17,9 +17,11 @@ from .turnlog import log_turn
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await elasticsearch.start()
+    await qdrant.start()
     try:
         yield
     finally:
+        await qdrant.close()
         await elasticsearch.close()
 
 

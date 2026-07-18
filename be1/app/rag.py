@@ -1,17 +1,20 @@
 """RAG cho câu hỏi chính sách.
 
-chunk policy-files/*.md -> embed (FPT, OpenAI-compatible cùng base_url với LLM) ->
-tìm top-k theo cosine. MOCK_LLM=1 hoặc chưa cấu hình EMBED_MODEL -> fallback tìm kiếm
-lexical (token overlap) để luồng vẫn chạy offline không cần key.
+chunk policy-files/*.md -> embed (OpenAI-compatible, cùng base_url với LLM) ->
+lưu/tìm trong Qdrant (vector DB). MOCK_LLM=1 hoặc chưa cấu hình EMBED_MODEL ->
+fallback tìm kiếm lexical (token overlap) để luồng vẫn chạy offline, không cần
+key lẫn Qdrant.
 
-Index cache ở logs/policy_index.json, gắn hash của (nội dung file + tên model) —
-đổi file chính sách hoặc đổi model là tự build lại.
+Index build lazily ở lần hỏi chính sách đầu tiên; marker hash (file + model) ở
+logs/policy_qdrant.hash cho biết khi nào cần build lại (đổi file hoặc đổi model).
 """
 import hashlib
-import json
-import math
 import re
 from dataclasses import dataclass
+
+import httpx
+
+from db.qdrant import qdrant
 
 from .config import (
     EMBED_API_KEY,
@@ -19,7 +22,8 @@ from .config import (
     EMBED_MODEL,
     MOCK_LLM,
     POLICY_DIR,
-    POLICY_INDEX,
+    POLICY_HASH_FILE,
+    QDRANT_COLLECTION,
     RAG_TOP_K,
 )
 
@@ -83,57 +87,65 @@ def _load_chunks() -> list[dict]:
     return out
 
 
-# ---------------- embeddings (OpenAI-compatible) ----------------
+# ---------------- embeddings (OpenAI-compatible qua httpx) ----------------
 
 async def _embed(texts: list[str]) -> list[list[float]]:
-    from openai import AsyncOpenAI
-
-    client = AsyncOpenAI(base_url=EMBED_BASE_URL, api_key=EMBED_API_KEY, timeout=60)
+    url = EMBED_BASE_URL.rstrip("/") + "/embeddings"
+    headers = {"Authorization": f"Bearer {EMBED_API_KEY}"} if EMBED_API_KEY else {}
     out: list[list[float]] = []
-    for i in range(0, len(texts), 64):  # batch để tránh giới hạn payload
-        resp = await client.embeddings.create(model=EMBED_MODEL, input=texts[i:i + 64])
-        out.extend(d.embedding for d in resp.data)
+    async with httpx.AsyncClient(timeout=60) as client:
+        for i in range(0, len(texts), 64):  # batch tránh giới hạn payload
+            resp = await client.post(
+                url, headers=headers,
+                json={"model": EMBED_MODEL, "input": texts[i:i + 64]},
+            )
+            resp.raise_for_status()
+            data = sorted(resp.json()["data"], key=lambda d: d["index"])
+            out.extend(d["embedding"] for d in data)
     return out
 
 
-def _cos(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    return dot / (na * nb) if na and nb else 0.0
-
-
-def _files_hash(chunks: list[dict]) -> str:
+def _content_hash(chunks: list[dict]) -> str:
     h = hashlib.sha256()
     h.update(EMBED_MODEL.encode())
+    h.update(QDRANT_COLLECTION.encode())
     for c in chunks:
         h.update(c["id"].encode())
         h.update(c["text"].encode("utf-8"))
     return h.hexdigest()[:16]
 
 
-_INDEX: dict | None = None
+# ---------------- index vào Qdrant ----------------
+
+_ready = False
 
 
-async def build_index(force: bool = False) -> dict:
-    """Build (hoặc load cache) index embedding. Cần EMBED_MODEL + network."""
-    global _INDEX
-    if _INDEX is not None and not force:
-        return _INDEX
+async def build_index(force: bool = False) -> int:
+    """Build (hoặc dùng lại) collection Qdrant. Cần EMBED_MODEL + Qdrant chạy.
+
+    Trả về số chunk trong collection. Idempotent: hash + count khớp thì bỏ qua embed.
+    """
+    global _ready
     chunks = _load_chunks()
-    want = _files_hash(chunks)
-    if not force and POLICY_INDEX.exists():
-        cached = json.loads(POLICY_INDEX.read_text(encoding="utf-8"))
-        if cached.get("hash") == want:
-            _INDEX = cached
-            return _INDEX
+    want = _content_hash(chunks)
+    if not force and _ready:
+        return len(chunks)
+    have = POLICY_HASH_FILE.read_text().strip() if POLICY_HASH_FILE.exists() else ""
+    if not force and have == want and await qdrant.count() == len(chunks):
+        _ready = True
+        return len(chunks)
+
     embs = await _embed([c["text"] for c in chunks])
-    for c, e in zip(chunks, embs):
-        c["embedding"] = e
-    _INDEX = {"hash": want, "model": EMBED_MODEL, "chunks": chunks}
-    POLICY_INDEX.parent.mkdir(parents=True, exist_ok=True)
-    POLICY_INDEX.write_text(json.dumps(_INDEX, ensure_ascii=False), encoding="utf-8")
-    return _INDEX
+    await qdrant.recreate_collection(vector_size=len(embs[0]))
+    await qdrant.upsert([
+        {"id": i, "vector": e,
+         "payload": {"source": c["source"], "title": c["title"], "text": c["text"]}}
+        for i, (c, e) in enumerate(zip(chunks, embs))
+    ])
+    POLICY_HASH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    POLICY_HASH_FILE.write_text(want)
+    _ready = True
+    return len(chunks)
 
 
 # ---------------- lexical fallback (offline) ----------------
@@ -170,11 +182,14 @@ def _lexical_search(query: str, k: int) -> list[Hit]:
 async def search(query: str, k: int = RAG_TOP_K) -> list[Hit]:
     if MOCK_LLM or not (EMBED_MODEL and EMBED_API_KEY):
         return _lexical_search(query, k)
-    idx = await build_index()
+    await build_index()
     qvec = (await _embed([query]))[0]
-    scored = sorted(
-        ((_cos(qvec, c["embedding"]), c) for c in idx["chunks"]),
-        key=lambda t: t[0],
-        reverse=True,
-    )[:k]
-    return [Hit(c["text"], c["source"], c["title"], round(s, 4)) for s, c in scored]
+    results = await qdrant.search(qvec, limit=k)
+    hits: list[Hit] = []
+    for r in results:
+        p = r.get("payload") or {}
+        hits.append(Hit(
+            p.get("text", ""), p.get("source", ""), p.get("title", ""),
+            round(float(r.get("score", 0.0)), 4),
+        ))
+    return hits
