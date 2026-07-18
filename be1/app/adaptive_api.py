@@ -15,7 +15,7 @@ from .config import ONTOLOGY_REVIEWER_TOKEN
 
 router = APIRouter(prefix="/api/v1/ontology", tags=["adaptive-ontology"])
 _root = Path(__file__).resolve().parents[2]
-engine = AdaptiveOntologyEngine(_root / "data" / "ontology_data.json", _root / "be1" / "data" / "generated_categories.json")
+engine = AdaptiveOntologyEngine(_root / "data" / "ontology_data.json", _root / "be1" / "data" / "adaptive_profiles.json")
 
 
 def require_reviewer(authorization: str | None = Header(default=None)) -> None:

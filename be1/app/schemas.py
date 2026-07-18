@@ -52,6 +52,26 @@ class IntentResult(BaseModel):
     needs_heating: Optional[bool] = Field(None, description="Khách có cần máy sưởi ấm vào mùa lạnh không")
     iron_portable: Optional[bool] = Field(None, description="Khách ưu tiên bàn ủi nhỏ gọn để mang đi")
 
+    ontology_answers: dict[str, Any] = Field(default_factory=dict)
+    active_answer_filter: bool | None = Field(
+        None, description="Active answer selects an eligible catalog value/range"
+    )
+    active_answer_preference: Literal["higher", "lower"] | None = Field(
+        None, description="Optional soft preference for the active numeric/ordered catalog field"
+    )
+    active_answer_numeric_value: float | None = Field(
+        None, description="Numeric answer converted to the active catalog field's stated unit"
+    )
+    active_answer_boolean_value: bool | None = Field(
+        None, description="Language-independent true/false meaning of an answer to an active boolean question"
+    )
+    active_answer_skip: bool = Field(False, description="Customer has no preference for the active question")
+    active_answer_clarify: bool = Field(False, description="Customer reply is incomplete/ambiguous")
+    active_question_override: bool = Field(
+        False,
+        description="Customer explicitly abandons the active question to change product category or ask policy",
+    )
+
     def slot_dict(self) -> dict[str, Any]:
         return {
             k: v
@@ -79,6 +99,15 @@ class SlotDef(BaseModel):
     ask_hint: str
     question_type: str = ""
     possible_answers: str = ""
+    value_map: dict[str, list[str]] = Field(default_factory=dict)
+    # These are produced from catalog evidence by the runtime-profile
+    # compiler.  They are not a per-category rule table.
+    operation: str = "equals"
+    ordered_values: list[str] = Field(default_factory=list)
+    unit: str = ""
+    customer_effort: float = 1.0
+    boolean_true_values: list[str] = Field(default_factory=list)
+    boolean_false_values: list[str] = Field(default_factory=list)
 
 
 class NextQuestion(BaseModel):

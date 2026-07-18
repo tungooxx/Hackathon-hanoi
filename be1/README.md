@@ -186,7 +186,7 @@ suggest_next_question(category, filled_slots, asked_slots, candidates) -> NextQu
 
 - Exact seed → `REVIEWED`; related category → guarded `COMPOSED_*`; distant category → `GENERATED_DISTANT` with all new category-specific items marked `PROVISIONAL`.
 - Modules activate only when their own schema/sample evidence exists. A display does not automatically activate battery or portability.
-- Generated profiles persist in `be1/data/generated_categories.json`; use `/review/{profile_id}/approve` or `/reject` for human review.
+- Adaptive profiles persist in `be1/data/adaptive_profiles.json`; use `/review/{profile_id}/approve` or `/reject` for human review.
 - `POST /api/v1/ontology/questions/next` returns at most one eligible Vietnamese question.
 
 Example request:

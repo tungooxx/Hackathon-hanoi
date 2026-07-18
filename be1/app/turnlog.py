@@ -19,5 +19,8 @@ def log_turn(session_id: str, query: str, events: list[dict]) -> None:
         "timings_ms": {e["stage"]: e["ms"] for e in events if e["type"] == "_stage"},
     }
     TURN_LOG.parent.mkdir(exist_ok=True)
-    with TURN_LOG.open("a") as f:
+    # Vietnamese assistant responses must not depend on the Windows console
+    # code page.  A logging failure runs during SSE generator cleanup and can
+    # otherwise terminate an already-completed client stream.
+    with TURN_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")

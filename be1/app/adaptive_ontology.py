@@ -7,6 +7,7 @@ only provisional profiles separately.
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
+from filelock import FileLock
 from pydantic import BaseModel, Field
 
 
@@ -26,6 +28,7 @@ REVIEWED_SEED_CATEGORIES = {
 CORE_CATEGORY = "Tất cả"
 COMPOSE_THRESHOLD = 0.45
 STRONG_TRANSFER_THRESHOLD = 0.75
+ADAPTIVE_SCHEMA_VERSION = 2
 
 
 def normalize_text(value: str) -> str:
@@ -157,8 +160,10 @@ class AdaptiveOntologyEngine:
         self.seed = OntologySeedLoader(ontology_path).load()
         self.registry_path = registry_path
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.registry_path.exists():
-            self.registry_path.write_text("{}", encoding="utf-8")
+        self._registry_lock = FileLock(f"{self.registry_path}.lock")
+        with self._registry_lock:
+            if not self.registry_path.exists():
+                self.registry_path.write_text("{}", encoding="utf-8")
         self._by_category = self._index_seed()
 
     def _index_seed(self) -> dict[str, dict[str, list[dict[str, Any]]]]:
@@ -196,16 +201,16 @@ class AdaptiveOntologyEngine:
         fixed_display = normalize_text(request.category_name) in {"tivi", "tv", "television"}
         for module, patterns in MODULE_PATTERNS.items():
             hits = [pattern for pattern in patterns if re.search(rf"(?<!\w){re.escape(pattern)}(?!\w)", normalized)]
-            if hits:
-                states.append(ModuleState(module_id=f"MOD_{module.upper()}", label=module.replace("_", " ").title(),
-                    status="REQUIRED", confidence=min(0.99, 0.65 + 0.1 * len(hits)), evidence=hits,
-                    source_categories=source_categories))
-            elif module == "battery" and fixed_display:
+            if module == "battery" and fixed_display:
                 states.append(ModuleState(module_id="MOD_BATTERY", label="Battery", status="INACTIVE", confidence=0.97,
                     negative_evidence=["Không có trường dữ liệu pin", "Thiết bị hiển thị cố định"], source_categories=[]))
             elif module == "portability" and fixed_display:
                 states.append(ModuleState(module_id="MOD_PORTABILITY", label="Portability", status="INACTIVE", confidence=0.90,
                     negative_evidence=["Không có bằng chứng di động hoặc trọng lượng"], source_categories=[]))
+            elif hits:
+                states.append(ModuleState(module_id=f"MOD_{module.upper()}", label=module.replace("_", " ").title(),
+                    status="REQUIRED", confidence=min(0.99, 0.65 + 0.1 * len(hits)), evidence=hits,
+                    source_categories=source_categories))
         return states
 
     def _similarity(self, request: AdaptCategoryRequest) -> list[SeedMatch]:
@@ -232,6 +237,7 @@ class AdaptiveOntologyEngine:
     def _profile_id(self, category: str, request: AdaptCategoryRequest | None = None) -> str:
         slug = re.sub(r"[^a-z0-9]+", "_", normalize_text(category)).strip("_") or "unknown"
         evidence = {
+            "schema_version": ADAPTIVE_SCHEMA_VERSION,
             "category": category,
             "raw_fields": sorted(normalize_text(item) for item in (request.raw_fields if request else [])),
             "samples": request.sample_products if request else [],
@@ -253,6 +259,10 @@ class AdaptiveOntologyEngine:
     def _validate(self, profile: AdaptedOntologyResponse) -> ValidationResult:
         ids = [item.get("id") for item in profile.concepts if item.get("id")]
         errors = ["Duplicate concept IDs" ] if len(ids) != len(set(ids)) else []
+        for label, values in (("question", profile.questions), ("rule", profile.rules), ("evidence", profile.evidence)):
+            item_ids = [item.get("id") for item in values if item.get("id")]
+            if len(item_ids) != len(set(item_ids)):
+                errors.append(f"Duplicate {label} IDs")
         concept_ids = set(ids)
         for relation in profile.relationships:
             if relation.get("source") not in concept_ids or relation.get("target") not in concept_ids:
@@ -260,12 +270,16 @@ class AdaptiveOntologyEngine:
         return ValidationResult(valid=not errors, errors=errors)
 
     def _load_registry(self) -> dict[str, Any]:
-        return json.loads(self.registry_path.read_text(encoding="utf-8"))
+        with self._registry_lock:
+            return json.loads(self.registry_path.read_text(encoding="utf-8"))
 
     def _store(self, profile: AdaptedOntologyResponse) -> None:
-        registry = self._load_registry()
-        registry[profile.profile_id] = profile.model_dump(mode="json")
-        self.registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._registry_lock:
+            registry = json.loads(self.registry_path.read_text(encoding="utf-8"))
+            registry[profile.profile_id] = profile.model_dump(mode="json")
+            temporary = self.registry_path.with_suffix(f"{self.registry_path.suffix}.{os.getpid()}.tmp")
+            temporary.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temporary, self.registry_path)
 
     def adapt(self, request: AdaptCategoryRequest) -> AdaptedOntologyResponse:
         category = self.canonical_category(request.category_name)
@@ -313,6 +327,21 @@ class AdaptiveOntologyEngine:
         states = self._module_states(request, sources)
         active = [state for state in states if state.status in {"REQUIRED", "OPTIONAL", "CONDITIONAL"}]
         inactive = [state for state in states if state.status == "INACTIVE"]
+        active_module_ids = {state.module_id for state in active}
+        for question in items["questions"]:
+            if question.get("moduleId"):
+                continue
+            if question.get("category") == CORE_CATEGORY:
+                question["moduleId"] = "MOD_CORE"
+                continue
+            normalized_question = normalize_text(str(question.get("label", "")))
+            verified_owners = [
+                f"MOD_{module.upper()}" for module, patterns in MODULE_PATTERNS.items()
+                if f"MOD_{module.upper()}" in active_module_ids
+                and any(pattern in normalized_question for pattern in patterns)
+            ]
+            if len(verified_owners) == 1:
+                question["moduleId"] = verified_owners[0]
         profile = AdaptedOntologyResponse(profile_id=profile_id, category=request.category_name, normalized_category=category,
             mode=mode, family=family, coverage_level=coverage, seed_matches=matches, active_modules=active,
             inactive_modules=inactive, concepts=items["concepts"], relationships=items["relationships"],
@@ -336,19 +365,34 @@ class AdaptiveOntologyEngine:
         profile = self.get_profile(request.category_profile_id)
         if not profile:
             return None
-        active_names = {state.label.lower().replace(" ", "_") for state in profile.active_modules}
+        active_modules = {state.module_id for state in profile.active_modules}
         known = {normalize_text(key) for key in request.known_user_context}
+        known.update(normalize_text(str(value)) for turn in request.conversation_history for value in turn.values())
+        available = {normalize_text(field) for field in request.available_product_fields}
+        concepts = {item.get("id"): item for item in profile.concepts}
+        by_question: dict[str, list[dict[str, Any]]] = {}
+        for relation in profile.relationships:
+            if relation.get("questionId"):
+                by_question.setdefault(relation["questionId"], []).append(relation)
         for question in profile.questions:
             concept = question.get("conceptId", "")
             label = question.get("label", "")
-            if normalize_text(concept) in known or normalize_text(label) in known:
+            question_id = question.get("id", "")
+            if normalize_text(concept) in known or normalize_text(label) in known or normalize_text(question_id) in known:
                 continue
-            text = normalize_text(label)
-            if "pin" in text and "battery" not in active_names:
+            owner = concepts.get(concept, {})
+            module_id = question.get("moduleId") or owner.get("moduleId")
+            if not module_id or (module_id != "MOD_CORE" and module_id not in active_modules):
+                continue
+            relations = by_question.get(question_id, [])
+            required_fields = [field.strip() for relation in relations for field in relation.get("requiredFields", "").split("|")]
+            if required_fields and not any(normalize_text(field) in available for field in required_fields):
+                continue
+            if not relations:
                 continue
             return NextQuestionResponse(question_id=question.get("id", "Q_UNKNOWN"), question=label,
                 reason="Câu trả lời có thể thay đổi điều kiện phù hợp hoặc thứ hạng sản phẩm.", resolved_concept_id=concept,
-                module_id="MOD_CORE", hard_gate=question.get("hardGate") == "Yes", score=0.8, source="ORIGINAL")
+                module_id=module_id, hard_gate=question.get("hardGate") == "Yes", score=0.8, source="ORIGINAL")
         return None
 
     def review(self, profile_id: str, approved: bool) -> AdaptedOntologyResponse:

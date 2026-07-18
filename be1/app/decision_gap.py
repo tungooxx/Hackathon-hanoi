@@ -15,9 +15,6 @@ from .schemas import NextQuestion
 from .scoring import rank_top3
 
 
-_EFFORT = {"budget_max": 1.0, "area_m2": 1.0, "room_type": 1.0, "afternoon_sun": 1.0, "province": 2.0}
-
-
 def _price_options(products: list[dict]) -> list[float]:
     prices = sorted({float(p["price_sale"]) for p in products if p.get("price_sale")})
     if not prices:
@@ -33,7 +30,12 @@ def _area_options(products: list[dict]) -> list[float]:
     return values[:5]
 
 
-def _likely_answers(slot: str, products: list[dict]) -> list[Any]:
+def _likely_answers(slot: str, products: list[dict], field: str = "") -> list[Any]:
+    if field in {"price_sale", "price_original"}:
+        return _price_options(products)
+    if field.startswith("attributes."):
+        key = field.split(".", 1)[1]
+        return list({product.get("attributes", {}).get(key) for product in products if product.get("attributes", {}).get(key)})[:5]
     if slot == "budget_max":
         return _price_options(products)
     if slot == "area_m2":
@@ -57,8 +59,8 @@ def _likely_answers(slot: str, products: list[dict]) -> list[Any]:
     return []
 
 
-def _signature(products: list[dict], priorities: list[str]) -> list[str]:
-    return [str(p["sku"]) for p in rank_top3(products, priorities)] if products else []
+def _signature(products: list[dict], priorities: list[str], catalog_preferences: list[dict] | None = None) -> list[str]:
+    return [str(p["sku"]) for p in rank_top3(products, priorities, catalog_preferences)] if products else []
 
 
 def _top3_change(before: list[str], after: list[str]) -> float:
@@ -81,28 +83,40 @@ def choose_next_question(
     asked_slots: list[str],
     products: list[dict],
     priorities: list[str],
+    schema: list | None = None,
+    catalog_preferences: list[dict] | None = None,
 ) -> NextQuestion | None:
     """Select the unanswered ontology question with highest expected impact."""
+    effective_schema = schema if schema is not None else ontology.get_slot_schema(category, products)
     baseline_products = apply_hard_filters(products, slots)
+    baseline_products = ontology.apply_ontology_filters(
+        category, baseline_products, slots, effective_schema
+    )
     baseline_priorities = ontology.derive_priorities(category, slots, priorities)
-    baseline = _signature(baseline_products, baseline_priorities)
+    baseline = _signature(baseline_products, baseline_priorities, catalog_preferences)
     best: tuple[bool, float, str, float] | None = None
 
-    for definition in ontology.get_slot_schema(category, products):
+    for definition in effective_schema:
         slot = definition.name
         if slot in slots or slot in asked_slots:
             continue
-        answers = _likely_answers(slot, products)
+        answers = _likely_answers(slot, products, definition.maps_to_field)
         if not answers:
             continue
         changes: list[float] = []
         for answer in answers:
             simulated_slots = {**slots, slot: answer}
             simulated_products = apply_hard_filters(products, simulated_slots)
+            # Use exactly the same typed normalizer/filter executor as the
+            # live conversation.  Otherwise Decision-Gap would score a
+            # literal-string simulation but execute a numeric/ordinal reply.
+            simulated_products = ontology.apply_ontology_filters(
+                category, simulated_products, simulated_slots, effective_schema
+            )
             simulated_priorities = ontology.derive_priorities(category, simulated_slots, priorities)
-            changes.append(_top3_change(baseline, _signature(simulated_products, simulated_priorities)))
+            changes.append(_top3_change(baseline, _signature(simulated_products, simulated_priorities, catalog_preferences)))
         expected_change = sum(changes) / len(changes)
-        utility = expected_change / _EFFORT.get(slot, 1.0)
+        utility = expected_change / max(0.1, float(definition.customer_effort))
         # Required ontology questions are eligibility gates: retain them even
         # when this catalog's current top-3 happens to be stable.
         if (definition.required or utility > 0) and (
