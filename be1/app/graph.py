@@ -5,7 +5,6 @@ a checkpointer and are intentionally stateless.
 Mọi output đẩy ra FE qua stream_mode="custom"; event type bắt đầu bằng "_"
 là internal (log-only), main.py sẽ không forward cho client.
 """
-import re
 import time
 from typing import Any, TypedDict
 
@@ -58,6 +57,7 @@ class AgentState(TypedDict, total=False):
     fulfillment_candidates: list[str]
     awaiting_checkout: bool
     checkout_contact_ready: bool
+    checkout_contact_submitted: bool
     catalog_preferences: list[dict[str, str]]
     # Session-history agent: cumulative compressed Markdown + uncompressed tail.
     session_content: str
@@ -104,12 +104,20 @@ async def intent_node(state: AgentState) -> dict:
     awaiting_fulfillment = state.get("awaiting_fulfillment", False)
     awaiting_checkout = state.get("awaiting_checkout", False)
     fulfillment_candidates: list[str] = []
+    fulfillment_reply = False
     catalog_preferences = list(state.get("catalog_preferences", []))
     category = state.get("category")
     if awaiting_checkout:
-        compact_phone = re.sub(r"[\s().-]", "", state["user_input"])
-        if re.fullmatch(r"(?:\+84|0)\d{9,10}", compact_phone):
+        if state.get("checkout_contact_submitted"):
             return {"intent_type": "same_topic", "checkout_contact_ready": True}
+        if llm.looks_like_checkout_cancellation(state["user_input"]):
+            return {
+                "intent_type": "same_topic",
+                "awaiting_checkout": False,
+                "checkout_contact_ready": False,
+                "wants_checkout": False,
+                "selected_sku": None,
+            }
     expected_question = None
     expected_definition = None
     if category and asked:
@@ -137,6 +145,9 @@ async def intent_node(state: AgentState) -> dict:
         recent_messages=state.get("recent_messages", []),
         known_categories=known_categories,
     )
+    if awaiting_checkout and (result.intent_type == "policy" or llm.looks_like_policy(state["user_input"])):
+        awaiting_checkout = False
+        result = result.model_copy(update={"wants_checkout": False})
     if awaiting_fulfillment:
         required_key = fulfillment.fulfillment_provider.required_context(fulfillment_context)
         if required_key:
@@ -144,8 +155,10 @@ async def intent_node(state: AgentState) -> dict:
             resolution = resolver(state["user_input"]) if resolver else None
             if resolution and resolution.region:
                 fulfillment_context[required_key] = resolution.region
+                fulfillment_reply = True
             elif resolution:
                 fulfillment_candidates = resolution.candidates
+                fulfillment_reply = bool(fulfillment_candidates)
     normalized_active_number = result.active_answer_numeric_value
     if (expected_definition and expected_definition.maps_to_field in {"price_sale", "price_original"}
             and (result.budget_max is not None or normalized_active_number is not None)):
@@ -167,6 +180,11 @@ async def intent_node(state: AgentState) -> dict:
         # category. The intent prompt explicitly marks a real topic switch via
         # active_question_override, which is the only case allowed to resolve.
         resolved_category, category_candidates = await product_repo.resolve_category_candidates(state["user_input"])
+        if fulfillment_reply:
+            # A verified province answer belongs to fulfilment.  Do not allow
+            # category fuzzy matching to reinterpret it as an unrelated
+            # catalog label (for example, a hub/cable category).
+            resolved_category, category_candidates = None, []
         explicit_category_label = bool(
             resolved_category
             and product_repo._contains_label(
@@ -984,7 +1002,8 @@ async def fulfillment_check_node(state: AgentState) -> dict:
         product = shortlist[index]
     result = await fulfillment.fulfillment_provider.check(product["sku"], state["fulfillment_context"])
     w({"type": "text_chunk", "content": result.message})
-    w({"type": "done", "turn_type": "fulfillment_check"})
+    if not state.get("fulfillment_for_checkout"):
+        w({"type": "done", "turn_type": "fulfillment_check"})
     return {
         "awaiting_fulfillment": False,
         "fulfillment_for_shortlist": False,
@@ -1053,8 +1072,10 @@ async def checkout_complete_node(state: AgentState) -> dict:
     return {
         "awaiting_checkout": False,
         "checkout_contact_ready": False,
+        "checkout_contact_submitted": False,
         "wants_checkout": False,
         "selected_sku": None,
+        "user_input": "[đã cung cấp số điện thoại]",
         **_assistant_history(state, message),
     }
 

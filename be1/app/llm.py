@@ -156,7 +156,15 @@ def looks_like_checkout(text: str) -> bool:
     """Recognize a category-independent commitment, not a browsing request."""
     normalized = unicodedata.normalize("NFD", (text or "").lower().replace("đ", "d"))
     normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    if looks_like_policy(text) or re.search(r"\b(?:chua|khong|ko)\s+(?:muon\s+)?(?:mua|dat mua|chot)\b", normalized):
+        return False
     return bool(re.search(r"\b(?:chot|dat mua|mua ngay|len don)\b", normalized))
+
+
+def looks_like_checkout_cancellation(text: str) -> bool:
+    normalized = unicodedata.normalize("NFD", (text or "").lower().replace("đ", "d"))
+    normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    return bool(re.search(r"\b(?:khong|ko|chua)\s+(?:muon\s+)?(?:mua|dat mua|chot)|\b(?:huy|bo qua)\b", normalized))
 
 
 def _mock_intent(text: str, category: str | None, expected_question: dict | None = None) -> IntentResult:
