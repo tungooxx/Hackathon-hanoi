@@ -146,7 +146,7 @@ async def get_runtime_slot_schema(category: str, products: list[dict[str, Any]])
     is unavailable, retain the deterministic fallback rather than failing chat.
     """
     from .config import RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS
-    from .profile_compiler import get_cached_profile
+    from .profile_compiler import get_cached_profile, get_compatible_cached_profile
 
     attributes = {key for product in products for key in product.get("attributes", {})}
     standard_fields = {"price_sale", "price_original"}
@@ -154,6 +154,12 @@ async def get_runtime_slot_schema(category: str, products: list[dict[str, Any]])
     if not attributes and not any(product.get("price_sale") for product in products):
         return []
     profile = get_cached_profile(category, products)
+    # A prewarmed profile can still be safe after a non-semantic catalog
+    # change.  Revalidate each field/value map against the live products
+    # before using that compatible subset; only compile/fallback when none is
+    # executable anymore.
+    if profile is None:
+        profile = get_compatible_cached_profile(category, products)
     if profile is None:
         try:
             profile = await asyncio.wait_for(

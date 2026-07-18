@@ -145,8 +145,8 @@ def _validate_questions(
     return valid, errors
 
 
-def get_cached_profile(category: str, products: list[dict]) -> RuntimeProfile | None:
-    """Return a validated cache hit without invoking the profile compiler."""
+def _cached_profile(category: str, products: list[dict], *, require_fingerprint: bool) -> RuntimeProfile | None:
+    """Load a cache entry only when it remains executable for this catalog."""
     fingerprint = _fingerprint(category, products)
     fields = sorted({key for product in products for key in product.get("attributes", {})})
     standard_fields = ["price_sale", "price_original"]
@@ -160,7 +160,7 @@ def get_cached_profile(category: str, products: list[dict]) -> RuntimeProfile | 
         for field in standard_fields
     })
     cached = _load_cache().get(category)
-    if not cached or cached.get("catalog_fingerprint") != fingerprint:
+    if not cached or (require_fingerprint and cached.get("catalog_fingerprint") != fingerprint):
         return None
     try:
         cached_profile = RuntimeProfile.model_validate(cached)
@@ -174,6 +174,22 @@ def get_cached_profile(category: str, products: list[dict]) -> RuntimeProfile | 
         logger.warning("Rejected runtime profile cache for %r: %s", category, cached_errors)
         return None
     return cached_profile.model_copy(update={"questions": cached_valid})
+
+
+def get_cached_profile(category: str, products: list[dict]) -> RuntimeProfile | None:
+    """Return an exact catalog-fingerprint cache hit without compiling."""
+    return _cached_profile(category, products, require_fingerprint=True)
+
+
+def get_compatible_cached_profile(category: str, products: list[dict]) -> RuntimeProfile | None:
+    """Reuse a stale snapshot only when every retained mapping still validates.
+
+    ES data can change order or receive harmless catalog updates between a
+    prewarm and a chat turn.  The profile's executable field/value validation
+    is stricter than a fingerprint alone, so it is safe to retain the valid
+    subset rather than degrading the whole category to budget-only fallback.
+    """
+    return _cached_profile(category, products, require_fingerprint=False)
 
 
 async def compile_profile(category: str, ontology_questions: list[dict], products: list[dict]) -> RuntimeProfile:
