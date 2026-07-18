@@ -1,3 +1,4 @@
+import math
 import os
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -182,7 +183,12 @@ def validate_auth_config() -> None:
         "LANGGRAPH_POOL_MAX_SIZE": LANGGRAPH_POOL_MAX_SIZE,
         "RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS": RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS,
     }
-    invalid = [name for name, value in positive_values.items() if value <= 0]
+    invalid = [
+        name for name, value in positive_values.items()
+        if value <= 0 or (
+            name == "RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS" and not math.isfinite(value)
+        )
+    ]
     if invalid:
         raise RuntimeError(
             f"Authentication settings must be positive: {', '.join(invalid)}"

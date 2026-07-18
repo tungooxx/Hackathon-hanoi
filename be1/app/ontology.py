@@ -21,6 +21,8 @@ from .schemas import NextQuestion, SlotDef
 
 ONTOLOGY_PATH = Path(__file__).resolve().parents[2] / "data" / "ontology_data.json"
 logger = logging.getLogger(__name__)
+_PROFILE_COMPILE_LOCKS: dict[str, asyncio.Lock] = {}
+_PROFILE_COMPILE_LOCKS_GUARD = asyncio.Lock()
 
 def _normal(value: str) -> str:
     value = unicodedata.normalize("NFD", value.lower())
@@ -46,6 +48,21 @@ def questions_for_category(category: str) -> list[dict[str, Any]]:
         question for question in _questions().values()
         if _normal(question["category"]) in {"tat ca", normalized_category}
     ]
+
+
+async def _compile_profile_once(category: str, products: list[dict[str, Any]]):
+    """Serialize cold-cache profile compilation for one canonical category."""
+    from .profile_compiler import compile_profile, get_cached_profile
+
+    key = _normal(category)
+    async with _PROFILE_COMPILE_LOCKS_GUARD:
+        lock = _PROFILE_COMPILE_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        # Another request may have populated this exact catalog profile while
+        # this request was waiting for the category lock.
+        if profile := get_cached_profile(category, products):
+            return profile
+        return await compile_profile(category, questions_for_category(category), products)
 
 
 def get_slot_schema(category: str, products: list[dict[str, Any]] | None = None) -> list[SlotDef]:
@@ -129,7 +146,7 @@ async def get_runtime_slot_schema(category: str, products: list[dict[str, Any]])
     is unavailable, retain the deterministic fallback rather than failing chat.
     """
     from .config import RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS
-    from .profile_compiler import compile_profile, get_cached_profile
+    from .profile_compiler import get_cached_profile
 
     attributes = {key for product in products for key in product.get("attributes", {})}
     standard_fields = {"price_sale", "price_original"}
@@ -140,7 +157,7 @@ async def get_runtime_slot_schema(category: str, products: list[dict[str, Any]])
     if profile is None:
         try:
             profile = await asyncio.wait_for(
-                compile_profile(category, questions_for_category(category), products),
+                _compile_profile_once(category, products),
                 timeout=RUNTIME_PROFILE_COMPILE_TIMEOUT_SECONDS,
             )
         except Exception as error:

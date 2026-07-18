@@ -283,7 +283,16 @@ async def intent_node(state: AgentState) -> dict:
     if result.category:
         category = result.category
 
-    slots.update(result.slot_dict())
+    extracted_slots = result.slot_dict()
+    budget_keys = {"budget_min", "budget_max", "budget_target"}
+    if budget_keys & extracted_slots.keys():
+        for key in budget_keys:
+            slots.pop(key, None)
+        catalog_preferences = [
+            item for item in catalog_preferences
+            if not (item.get("field") == "price_sale" and item.get("direction") == "closest")
+        ]
+    slots.update(extracted_slots)
     if result.budget_target is not None:
         catalog_preferences = [
             item for item in catalog_preferences
