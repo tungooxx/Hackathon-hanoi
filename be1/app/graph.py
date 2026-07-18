@@ -877,7 +877,7 @@ async def fulfillment_check_node(state: AgentState) -> dict:
     if state.get("fulfillment_for_shortlist"):
         region = state["fulfillment_context"]["region"]
         w({"type": "text_chunk", "content": (
-            f"Dạ trong prototype, các mẫu đang phù hợp đều có hàng tại {region} ạ. "
+            f"Dạ các mẫu đang phù hợp đều có thể giao tại {region} ạ. "
             "Em gửi anh/chị các lựa chọn để mình so sánh nhé."
         )})
         return {
