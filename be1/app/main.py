@@ -6,6 +6,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from .graph import graph
 from .schemas import ChatRequest
+from .tracing import set_session
 from .turnlog import log_turn
 
 app = FastAPI(title="DMX Advisor BE1")
@@ -24,6 +25,7 @@ async def chat(req: ChatRequest):
     config = {"configurable": {"thread_id": req.session_id}}
 
     async def gen():
+        set_session(req.session_id)
         events: list[dict] = []
         try:
             async for payload in graph.astream(

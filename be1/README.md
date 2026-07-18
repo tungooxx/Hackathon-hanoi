@@ -52,3 +52,25 @@ suggest_next_question(category, filled_slots, asked_slots, candidates) -> NextQu
 
 Mỗi turn append vào `logs/turns.jsonl`: `query`, `response`, `context_json` (đúng data LLM nhìn thấy
 — judge phải đối chiếu với cái này, không phải API thô), `funnel`, `timings_ms` từng stage.
+
+## Judge hallucination + eval harness
+
+```bash
+python scripts/judge_batch.py            # chấm mọi turn trong logs/turns.jsonl theo CLAIM
+python scripts/eval_run.py               # chạy 10 scenario (eval/scenarios.jsonl) qua HTTP thật
+python scripts/eval_run.py --judge       # scenario + chấm hallucination luôn các turn vừa sinh
+MOCK_JUDGE=1 python scripts/judge_batch.py   # offline: chỉ đối chiếu con số, không cần key
+```
+
+- Judge dùng model **ngoài, mạnh hơn** (env `JUDGE_*`, rỗng thì dùng lại `LLM_*`), chấm từng claim:
+  `SUPPORTED / CONTRADICTED / UNSUPPORTED / SALER_TALK` + `null_honesty`.
+- Metrics: **hallucination_rate_turn** (turn có ≥1 claim bịa), **grounded_rate_claim**,
+  **null_honesty_rate** (target: 0 / 1.0 / 1.0). Turn bị gắn cờ in ra kèm claim + evidence.
+- Thêm scenario: append 1 dòng JSON vào `eval/scenarios.jsonl` (kỳ vọng viết lỏng theo
+  `expect_turn_type` — chất lượng nội dung để judge chấm, đừng assert cứng vào text).
+
+## Langfuse (tracing)
+
+Điền `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` vào `.env` là tự bật (không có key = no-op):
+- Mỗi LLM call (`intent`, `phrase_*`) thành trace, group theo `session_id`.
+- `judge_batch.py` push judge traces + scores (`hallucinated_claims`, `grounded`) lên dashboard.
