@@ -42,6 +42,10 @@ class IntentResult(BaseModel):
         False,
         description="Khách muốn xem thông tin đầy đủ/chi tiết của sản phẩm đã chọn",
     )
+    wants_checkout: bool = Field(
+        False,
+        description="Khách muốn chốt/đặt mua một sản phẩm cụ thể trong danh sách hoặc vừa nêu",
+    )
     price_order: Optional[Literal["lowest", "highest"]] = Field(
         None,
         description="Khach hoi mau re nhat/gia thap nhat (lowest) hoac dat nhat/gia cao nhat (highest) trong danh sach dang loc",
@@ -79,6 +83,18 @@ class IntentResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_budget_mode(self) -> "IntentResult":
+        # Some structured-output providers preserve numeric fields but omit
+        # the redundant discriminator. Infer only an unambiguous shape.
+        if self.budget_mode is None:
+            if self.budget_min is not None and self.budget_max is None and self.budget_target is None:
+                self.budget_mode = "min"
+            elif self.budget_min is None and self.budget_max is not None and self.budget_target is None:
+                self.budget_mode = "max"
+            elif (self.budget_min is not None and self.budget_max is not None
+                  and self.budget_min < self.budget_max and self.budget_target is None):
+                self.budget_mode = "range"
+            elif self.budget_min is None and self.budget_max is None and self.budget_target is not None:
+                self.budget_mode = "target"
         values = {
             "min": (self.budget_min is not None, self.budget_max is None, self.budget_target is None),
             "max": (self.budget_min is None, self.budget_max is not None, self.budget_target is None),
