@@ -22,3 +22,13 @@ MAX_ASK_TURNS = int(os.getenv("MAX_ASK_TURNS", "3"))
 COMPARE_THRESHOLD = int(os.getenv("COMPARE_THRESHOLD", "3"))
 
 TURN_LOG = ROOT / "logs" / "turns.jsonl"
+JUDGMENT_LOG = ROOT / "logs" / "judgments.jsonl"
+
+# judge = model NGOÀI hệ thống, mạnh hơn — rỗng thì fallback về LLM_* ở trên
+MOCK_JUDGE = os.getenv("MOCK_JUDGE", "0") == "1"
+JUDGE_BASE_URL = os.getenv("JUDGE_BASE_URL", "") or LLM_BASE_URL
+JUDGE_API_KEY = os.getenv("JUDGE_API_KEY", "") or LLM_API_KEY
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "") or LLM_MODEL_LARGE
+
+# có đủ 2 key Langfuse -> tự bật tracing (không có -> no-op, không cần cài đặt gì thêm)
+LANGFUSE_ENABLED = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))

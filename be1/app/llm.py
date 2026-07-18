@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 
 from .config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_LARGE, LLM_MODEL_SMALL, MOCK_LLM
 from .schemas import IntentResult
+from .tracing import lf_config
 
 INTENT_SYSTEM = """Bạn là bộ phân tích ý định cho trợ lý bán hàng Điện Máy Xanh.
 Trích xuất từ tin nhắn khách (tiếng Việt có thể sai chính tả, không dấu, viết tắt).
@@ -94,7 +95,7 @@ async def extract_intent(text: str, category: str | None, slots: dict) -> Intent
         return _mock_intent(text, category)
     llm = _get_llm(LLM_MODEL_SMALL, 0.0).with_structured_output(IntentResult)
     system = INTENT_SYSTEM.format(category=category or "chưa có", slots=json.dumps(slots, ensure_ascii=False))
-    return await llm.ainvoke([("system", system), ("user", text)])
+    return await llm.ainvoke([("system", system), ("user", text)], config=lf_config("intent"))
 
 
 # ---------------- phrasing (streaming) ----------------
@@ -143,10 +144,12 @@ async def stream_phrase(kind: str, context: dict) -> AsyncIterator[str]:
                "Số sản phẩm đang khớp: {candidate_count}. Thông tin đã có: {slots}",
         "compare": "So sánh và tư vấn top 3 sau cho khách (ưu tiên của khách: {priorities}). "
                    "Nêu trade-off giữa 3 mẫu. DATA (nguồn duy nhất được phép dùng): {products}",
-        "no_match": "Không có sản phẩm khớp bộ lọc {slots}. Xin lỗi khách và đề xuất nới tiêu chí nào hợp lý.",
+        "no_match": "Không có sản phẩm khớp bộ lọc {slots}. Xin lỗi khách và đề xuất nới tiêu chí nào hợp lý. "
+                    "TUYỆT ĐỐI không nêu bất kỳ con số/thông số sản phẩm nào (turn này không có dữ liệu sản phẩm).",
     }[kind].format(**{k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v
                       for k, v in context.items()})
     llm = _get_llm(LLM_MODEL_LARGE, 0.3)
-    async for chunk in llm.astream([("system", SALER_SYSTEM), ("user", user_msg)]):
+    async for chunk in llm.astream([("system", SALER_SYSTEM), ("user", user_msg)],
+                                   config=lf_config(f"phrase_{kind}")):
         if chunk.content:
             yield chunk.content
