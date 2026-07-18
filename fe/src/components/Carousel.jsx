@@ -6,7 +6,7 @@ export default function Carousel() {
   const count = carouselSlides.length
 
   const go = useCallback(
-    (next) => setIndex((i) => (next + count) % count),
+    (next) => setIndex(() => (next + count) % count),
     [count],
   )
 

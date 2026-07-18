@@ -1,16 +1,44 @@
-# React + Vite
+# DMX Advisor frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+## Run locally
 
-Currently, two official plugins are available:
+Start BE1 on port `8100`, then:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+cd fe
+npm install
+npm run dev
+```
 
-## React Compiler
+During local development, the browser calls `/auth`, `/chat`, and `/health`
+on the Vite origin. Vite proxies those requests to BE1 at
+`http://127.0.0.1:8100`. This avoids hostname, CORS, and `SameSite` cookie
+mismatches when Vite is opened through localhost, a LAN address, or a remote
+development URL.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+To change the local proxy target, copy `.env.example` to `.env` and set:
 
-## Expanding the Oxlint configuration
+```dotenv
+VITE_DEV_PROXY_TARGET=http://127.0.0.1:8100
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+For a production build that calls a separate backend origin, set
+`VITE_API_BASE_URL`. That frontend origin must also be listed in BE1's
+`FRONTEND_ORIGINS`.
+
+## Authentication
+
+- `/login`: phone and password login.
+- `/register`: phone, password, and confirmation registration.
+- Registration signs the new user in immediately.
+- `AuthProvider` restores `/auth/me` at startup and performs one refresh retry.
+- JWTs stay in backend-issued HttpOnly cookies and are never stored by React.
+- The header shows the masked phone and logout menu for authenticated users.
+
+## Validation
+
+```bash
+npm test
+npm run lint
+npm run build
+```

@@ -4,7 +4,7 @@
 // BE1 events: funnel_count | question | text_chunk | product_cards | done
 // (event type "_..." là internal, BE1 đã không forward).
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000'
+import { apiFetch } from './apiClient'
 
 /**
  * Gọi BE1 và dispatch từng event qua handlers.
@@ -18,7 +18,7 @@ export async function streamChat({ sessionId, message, signal, handlers }) {
   const h = handlers || {}
   let res
   try {
-    res = await fetch(`${API_BASE}/chat`, {
+    res = await apiFetch('/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId, message }),

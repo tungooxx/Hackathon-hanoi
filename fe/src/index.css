@@ -6,6 +6,7 @@ html,
 body {
   margin: 0;
   padding: 0;
+  min-width: 320px;
 }
 
 body {
@@ -26,4 +27,17 @@ a {
 button {
   font-family: inherit;
   cursor: pointer;
+}
+
+button,
+a,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid rgba(38, 119, 210, 0.32);
+  outline-offset: 3px;
 }
