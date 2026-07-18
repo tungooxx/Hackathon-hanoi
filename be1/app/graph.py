@@ -1,13 +1,13 @@
 """LangGraph: intent -> retrieve -> (ask | compare) | off_topic.
 
-State persist theo session_id qua checkpointer (thay cho "History agent").
+Authenticated state persists through PostgreSQL; guest turns compile without
+a checkpointer and are intentionally stateless.
 Mọi output đẩy ra FE qua stream_mode="custom"; event type bắt đầu bằng "_"
 là internal (log-only), main.py sẽ không forward cho client.
 """
 import time
 from typing import Any, TypedDict
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
@@ -253,7 +253,7 @@ async def off_topic_node(state: AgentState) -> dict:
     return {}
 
 
-def build_graph():
+def build_graph(*, checkpointer):
     g = StateGraph(AgentState)
     g.add_node("intent", intent_node)
     g.add_node("retrieve", retrieve_node)
@@ -274,7 +274,4 @@ def build_graph():
     g.add_edge("price_answer", END)
     g.add_edge("policy", END)
     g.add_edge("off_topic", END)
-    return g.compile(checkpointer=MemorySaver())
-
-
-graph = build_graph()
+    return g.compile(checkpointer=checkpointer)

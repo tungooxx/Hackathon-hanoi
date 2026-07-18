@@ -2,8 +2,16 @@ fastapi
 uvicorn[standard]
 sse-starlette
 langgraph
+langgraph-checkpoint-postgres
+psycopg[binary,pool]
 langchain-openai
 pydantic
 httpx
 python-dotenv
 langfuse
+sqlalchemy
+asyncpg
+alembic
+PyJWT
+phonenumbers
+pwdlib[argon2]

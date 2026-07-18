@@ -1,4 +1,4 @@
-"""Eval harness: chạy batch scenario qua HTTP /chat thật, check kỳ vọng, rồi (tùy chọn)
+"""Eval harness: chạy batch scenario qua authenticated chat API, check kỳ vọng, rồi (tùy chọn)
 đưa chính các turn vừa sinh cho judge chấm hallucination.
 
 Chạy:  python scripts/eval_run.py                # cần server đang chạy ở --base
@@ -11,6 +11,7 @@ chất lượng nội dung do judge chấm, không assert cứng vào text.
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 import uuid
@@ -23,12 +24,57 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import ROOT, TURN_LOG  # noqa: E402
 
 
+def authenticate(
+    client: httpx.Client,
+    base: str,
+    *,
+    phone: str,
+    password: str,
+) -> None:
+    login = client.post(
+        f"{base}/auth/login",
+        json={"phone": phone, "password": password},
+    )
+    if login.status_code == 200:
+        return
+    registered = client.post(
+        f"{base}/auth/register",
+        json={
+            "phone": phone,
+            "password": password,
+            "password_confirmation": password,
+        },
+    )
+    if registered.status_code != 201:
+        raise RuntimeError(
+            "Cannot authenticate the eval user. Set --phone/--password. "
+            f"Login={login.text}; register={registered.text}"
+        )
+
+
+def create_chat_session(
+    client: httpx.Client,
+    base: str,
+    *,
+    title: str,
+) -> str:
+    response = client.post(
+        f"{base}/chat/sessions",
+        json={"title": title},
+    )
+    response.raise_for_status()
+    return response.json()["id"]
+
+
 def run_turn(client: httpx.Client, base: str, session_id: str, message: str) -> dict:
     events = []
     t0 = time.perf_counter()
     first_chunk_ms = None
-    with client.stream("POST", f"{base}/chat",
-                       json={"session_id": session_id, "message": message}) as r:
+    with client.stream(
+        "POST",
+        f"{base}/chat/sessions/{session_id}/messages",
+        json={"message": message},
+    ) as r:
         r.raise_for_status()
         for line in r.iter_lines():
             if line.startswith("data: "):
@@ -46,9 +92,22 @@ def run_turn(client: httpx.Client, base: str, session_id: str, message: str) -> 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base", default="http://127.0.0.1:8100")
+    ap.add_argument(
+        "--base",
+        default=os.getenv("BE1_BASE_URL", "http://127.0.0.1:8100"),
+    )
     ap.add_argument("--scenarios", default=str(ROOT / "eval" / "scenarios.jsonl"))
     ap.add_argument("--judge", action="store_true", help="chấm hallucination các turn vừa chạy")
+    ap.add_argument(
+        "--phone",
+        default=os.getenv("BE1_TEST_PHONE", "0900000002"),
+        help="phone-number account used by the authenticated eval client",
+    )
+    ap.add_argument(
+        "--password",
+        default=os.getenv("BE1_TEST_PASSWORD", "smoke-test-password"),
+        help="password for the authenticated eval client",
+    )
     args = ap.parse_args()
 
     scenarios = [json.loads(l) for l in Path(args.scenarios).read_text().splitlines() if l]
@@ -56,8 +115,18 @@ def main() -> None:
     results, sessions = [], []
 
     with httpx.Client(timeout=60) as client:
+        authenticate(
+            client,
+            args.base,
+            phone=args.phone,
+            password=args.password,
+        )
         for sc in scenarios:
-            session_id = f"eval-{run_tag}-{sc['id']}"
+            session_id = create_chat_session(
+                client,
+                args.base,
+                title=f"Eval {run_tag}: {sc['id']}",
+            )
             sessions.append(session_id)
             sc_pass, turn_logs = True, []
             for i, t in enumerate(sc["turns"], 1):

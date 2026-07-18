@@ -1,5 +1,7 @@
 .page {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   background: #0b3fa8;
 }
 
@@ -102,6 +104,92 @@
   border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 6px;
   padding: 7px 12px;
+}
+
+.header-auth {
+  position: relative;
+}
+
+.header-auth__trigger {
+  padding: 7px 0;
+  border: 0;
+  background: transparent;
+}
+
+.header-auth__caret {
+  margin-left: 1px;
+  font-size: 10px;
+  opacity: 0.78;
+}
+
+.header-auth__loading {
+  opacity: 0.82;
+}
+
+.header-auth__menu {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  width: 218px;
+  overflow: hidden;
+  border: 1px solid #e3e8ef;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 38px rgba(20, 42, 70, 0.2);
+  color: #26344a;
+}
+
+.header-auth__menu::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  right: 26px;
+  width: 12px;
+  height: 12px;
+  transform: rotate(45deg);
+  border-top: 1px solid #e3e8ef;
+  border-left: 1px solid #e3e8ef;
+  background: #fff;
+}
+
+.header-auth__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 15px 16px 12px;
+}
+
+.header-auth__identity span {
+  color: #7b8493;
+  font-size: 11px;
+}
+
+.header-auth__identity strong {
+  color: #26344a;
+  font-size: 14px;
+}
+
+.header-auth__menu > button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 16px;
+  border: 0;
+  border-top: 1px solid #edf0f4;
+  background: #fff;
+  color: #c23636;
+  font-size: 13px;
+  text-align: left;
+}
+
+.header-auth__menu > button:hover:not(:disabled) {
+  background: #fff6f6;
+}
+
+.header-auth__menu > button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .chevron {
@@ -938,5 +1026,61 @@
   }
   .header-actions {
     gap: 12px;
+  }
+
+  .header-main {
+    gap: 12px;
+  }
+
+  .category-btn {
+    display: none;
+  }
+
+  .search-bar {
+    max-width: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .promo-strip {
+    display: none;
+  }
+
+  .header-main {
+    padding: 11px 14px;
+  }
+
+  .logo img {
+    height: 27px;
+  }
+
+  .search-bar,
+  .action-item--cart,
+  .action-item--location {
+    display: none;
+  }
+
+  .header-actions {
+    margin-left: auto;
+  }
+
+  .category-nav__inner {
+    justify-content: flex-start;
+    gap: 20px;
+    padding: 9px 14px;
+  }
+
+  .login-popup {
+    display: none;
+  }
+
+  .chat-widget {
+    right: 14px;
+    bottom: 14px;
+  }
+
+  .chat-panel {
+    max-width: calc(100vw - 28px);
+    max-height: calc(100vh - 100px);
   }
 }

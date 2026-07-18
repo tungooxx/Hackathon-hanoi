@@ -1,19 +1,20 @@
+import { Navigate, Route, Routes } from 'react-router-dom'
 import Header from './components/Header'
 import Carousel from './components/Carousel'
 import QuickCategoryGrid from './components/QuickCategoryGrid'
 import PromoSection from './components/PromoSection'
 import ChatBubble from './components/ChatBubble'
 import LoginPopup from './components/LoginPopup'
+import LoginPage from './pages/LoginPage'
+import RegisterPage from './pages/RegisterPage'
 import labelLeft from './assets/label-left.png'
 import mascot from './assets/mascot-left.png'
 import ball from './assets/ball-right.png'
 import './App.css'
 
-function App() {
+function HomePage() {
   return (
-    <div className="page">
-      <Header />
-
+    <>
       <div className="stage">
         <img className="stage__label" src={labelLeft} alt="Worldcup 2026" />
         <img className="stage__mascot" src={mascot} alt="" aria-hidden="true" />
@@ -41,6 +42,22 @@ function App() {
       </div>
 
       <LoginPopup />
+    </>
+  )
+}
+
+function App() {
+  return (
+    <div className="page">
+      <Header />
+
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+
       <ChatBubble />
     </div>
   )
