@@ -15,6 +15,7 @@ from . import fulfillment, llm, ontology, product_repo, rag, tools
 from .config import COMPARE_THRESHOLD, LLM_API_KEY, MOCK_LLM, RAG_MIN_SCORE, RAG_TOP_K
 from .decision_gap import choose_next_question
 from .filtering import apply_hard_filters
+from .schemas import SlotDef
 from .scoring import rank_top3
 from .session_history import (
     HistoryMessage,
@@ -57,6 +58,12 @@ class AgentState(TypedDict, total=False):
     topic_changed: bool
 
 
+def _slot_defs(raw: list[Any] | None) -> list[SlotDef]:
+    """question_schema đi qua checkpointer Postgres bị deserialize thành dict thuần —
+    dựng lại SlotDef để mọi nơi dùng attribute access không sập ở turn sau."""
+    return [item if isinstance(item, SlotDef) else SlotDef.model_validate(item) for item in (raw or [])]
+
+
 def _customer_visible_slots(slots: dict[str, Any], schema: list[Any] | None = None) -> dict[str, Any]:
     """Never expose runtime IDs or executor sentinels in the UI funnel."""
     visible = {
@@ -87,7 +94,7 @@ async def intent_node(state: AgentState) -> dict:
     expected_definition = None
     if category and asked:
         schema = {definition.name: definition for definition in (
-            state.get("question_schema") or ontology.get_slot_schema(category)
+            _slot_defs(state.get("question_schema")) or ontology.get_slot_schema(category)
         )}
         if definition := schema.get(asked[-1]):
             expected_definition = definition
@@ -431,7 +438,7 @@ def route_after_retrieve(state: AgentState) -> str:
     started = time.perf_counter()
     nq = choose_next_question(
         state["category"], state["slots"], state["asked_slots"], state["catalog_products"], state["priorities"],
-        state.get("question_schema"), state.get("catalog_preferences"),
+        _slot_defs(state.get("question_schema")) or None, state.get("catalog_preferences"),
     )
     get_stream_writer()({"type": "_stage", "stage": "decision_gap", "ms": round((time.perf_counter() - started) * 1000)})
     return "ask" if nq else "compare"
@@ -440,12 +447,13 @@ def route_after_retrieve(state: AgentState) -> str:
 async def ask_node(state: AgentState) -> dict:
     w = get_stream_writer()
     decision_started = time.perf_counter()
+    question_schema = _slot_defs(state.get("question_schema"))
     nq = choose_next_question(
         state["category"], state["slots"], state["asked_slots"], state["catalog_products"], state["priorities"],
-        state.get("question_schema"), state.get("catalog_preferences"),
+        question_schema or None, state.get("catalog_preferences"),
     )
     w({"type": "_stage", "stage": "decision_gap_select", "ms": round((time.perf_counter() - decision_started) * 1000)})
-    schema = {s.name: s for s in state.get("question_schema", [])}
+    schema = {s.name: s for s in question_schema}
     w({"type": "question", "slot": nq.slot, "reason": nq.reason})
     t0 = time.perf_counter()
     chunks: list[str] = []

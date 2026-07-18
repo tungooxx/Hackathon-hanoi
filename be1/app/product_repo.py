@@ -78,17 +78,75 @@ def find_named_product(products: list[dict], query_text: str) -> dict | None:
     return None
 
 
-async def resolve_category_candidates(query_text: str) -> tuple[str | None, list[str]]:
-    """Resolve one real ES category or return close alternatives to clarify."""
+_categories_cache: dict[str, Any] = {"at": 0.0, "values": []}
+_CATEGORIES_TTL_SECONDS = 300.0
+
+
+async def list_categories() -> list[str]:
+    """Danh sách category thật trong ES (cache ngắn — dùng cho resolve + prompt intent)."""
+    import time as _time
+
+    now = _time.monotonic()
+    if _categories_cache["values"] and now - _categories_cache["at"] < _CATEGORIES_TTL_SECONDS:
+        return _categories_cache["values"]
     response = await elasticsearch.search({
         "size": 0,
         "aggs": {"categories": {"terms": {"field": "category_name.raw", "size": 1000}}},
     })
+    values = [bucket["key"] for bucket in response.get("aggregations", {}).get("categories", {}).get("buckets", [])]
+    if values:
+        _categories_cache.update(at=now, values=values)
+    return values
+
+
+def _subphrase_match(query: str, categories: list[str]) -> str | None:
+    """Khớp CỤM TỪ LIỀN KỀ giữa câu khách và nhãn category (đã normalize).
+
+    'tai nghe' khớp 'loa, tai nghe'; 'máy hút bụi' khớp 'may hut bui gia dinh' (run=3)
+    và thắng 'may hut mui' (run=2) nhờ ưu tiên độ dài run — tránh fuzzy nhầm bụi/mùi.
+    Nhiều nhãn cùng run (vd 'máy sấy tóc' khớp cả 'may say giay' lẫn 'may say quan ao')
+    -> phân thắng bằng tổng token trùng; vẫn hòa -> None để tầng LLM (đã thấy danh mục
+    thật) quyết định. run_len >= 2 mới tính (nhãn 1 từ như 'tivi' đã có _contains_label).
+    """
+    query_tokens = query.split()
+    scored: list[tuple[int, str]] = []
+    for category in categories:
+        label_tokens = _normal(category).split()
+        best_run = 0
+        for i in range(len(label_tokens)):
+            for j in range(len(query_tokens)):
+                run = 0
+                while (i + run < len(label_tokens) and j + run < len(query_tokens)
+                       and label_tokens[i + run] == query_tokens[j + run]):
+                    run += 1
+                best_run = max(best_run, run)
+        if best_run >= 2:
+            scored.append((best_run, category))
+    if not scored:
+        return None
+    max_run = max(run for run, _ in scored)
+    contenders = [category for run, category in scored if run == max_run]
+    if len(contenders) == 1:
+        return contenders[0]
+    query_set = set(query_tokens)
+    overlaps = sorted(
+        ((len(set(_normal(c).split()) & query_set), c) for c in contenders), reverse=True,
+    )
+    if overlaps[0][0] > overlaps[1][0]:
+        return overlaps[0][1]
+    return None
+
+
+async def resolve_category_candidates(query_text: str) -> tuple[str | None, list[str]]:
+    """Resolve one real ES category or return close alternatives to clarify."""
+    categories = await list_categories()
     query = _normal(query_text)
-    categories = [bucket["key"] for bucket in response.get("aggregations", {}).get("categories", {}).get("buckets", [])]
     exact = [category for category in categories if _contains_label(query, _normal(category))]
     if exact:
         return max(exact, key=lambda item: len(_normal(item))), []
+
+    if subphrase := _subphrase_match(query, categories):
+        return subphrase, []
 
     compact_query = query.replace(" ", "")
     if 2 <= len(compact_query) <= 6:
@@ -115,15 +173,13 @@ async def resolve_category_candidates(query_text: str) -> tuple[str | None, list
 
 async def resolve_category(query_text: str) -> str | None:
     """Discover a real category directly from Elasticsearch index values."""
-    response = await elasticsearch.search({
-        "size": 0,
-        "aggs": {"categories": {"terms": {"field": "category_name.raw", "size": 1000}}},
-    })
+    categories = await list_categories()
     query = _normal(query_text)
-    categories = [bucket["key"] for bucket in response.get("aggregations", {}).get("categories", {}).get("buckets", [])]
     matches = [category for category in categories if _contains_label(query, _normal(category))]
     if matches:
         return max(matches, key=lambda item: len(_normal(item)))
+    if subphrase := _subphrase_match(query, categories):
+        return subphrase
     # Generic abbreviation support (TV, ML, MRCC ...).  It is only accepted
     # when it identifies one real catalog category unambiguously.
     compact_query = query.replace(" ", "")
@@ -217,7 +273,9 @@ def _parse_inverter(specs: dict[str, str], name: str) -> bool:
 
 def _normalize(src: dict, category: str) -> dict:
     specs = _spec_map(src.get("specs", []))
-    name = src.get("product_name", "")
+    # crawler có doc product_name=null -> .get(..., "") vẫn trả None và làm sập
+    # regex parse phía dưới, kéo cả category thành catalog_unavailable
+    name = src.get("product_name") or ""
     area_min, area_max = _parse_area(specs, name)
     return {
         "sku": src.get("product_code") or str(src.get("product_id", "")),
