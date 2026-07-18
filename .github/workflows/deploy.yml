@@ -1,30 +1,100 @@
-name: Deploy to server
+name: CI/CD
 
-# Push-triggered deployment to the "my-assistant" server.
+# Standard flow:
+#   push/PR to main or stage  -> CI (backend tests + frontend build)
+#   push to main (CI passed)  -> CD (deploy over SSH to the server)
 #
-# Requires these repository secrets (Settings → Secrets and variables → Actions):
+# Deploy requires these repository secrets (Settings -> Secrets and variables -> Actions):
 #   SSH_HOST         server IP/hostname (e.g. 152.69.215.43)
 #   SSH_USER         ssh user (e.g. ubuntu)
 #   SSH_PRIVATE_KEY  contents of the deploy private key
 #   SSH_PASSPHRASE   passphrase for the private key (omit if key has none)
 #   BE1_ENV          full contents of be1/.env for production
 #   DEPLOY_ENV_PROD  full contents of deploy/.env.prod
-#
-# The server keeps be1/.env and deploy/.env.prod as gitignored files; this
-# workflow refreshes them from secrets on every deploy, then runs deploy.sh.
 
 on:
   push:
-    branches: [main]
+    branches: [main, stage]
+  pull_request:
+    branches: [main, stage]
   workflow_dispatch:
 
 concurrency:
-  group: deploy-production
-  cancel-in-progress: false
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  deploy:
+  # ---------- CI: backend ----------
+  backend-test:
+    name: Backend tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: be1
+          POSTGRES_USER: be1
+          POSTGRES_PASSWORD: be1
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U be1 -d be1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MOCK_LLM: "1"
+      MOCK_JUDGE: "1"
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://be1:be1@localhost:5432/be1
+      LANGGRAPH_DATABASE_URL: postgresql://be1:be1@localhost:5432/be1
+      JWT_SECRET_KEY: ci-only-jwt-secret-key-not-for-production-32
+      AUTH_TOKEN_DIGEST_SECRET: ci-only-digest-secret-not-for-production-32
+      AUTH_RATE_LIMIT_SECRET: ci-only-rate-limit-secret-not-for-prod-32b
+    defaults:
+      run:
+        working-directory: be1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv + Python 3.14
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Byte-compile sources
+        run: uv run python -m compileall app db
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+      - name: Run unit tests
+        run: uv run python -m unittest discover -s tests -v
+
+  # ---------- CI: frontend ----------
+  frontend-build:
+    name: Frontend lint + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: fe/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  # ---------- CD: deploy ----------
+  deploy:
+    name: Deploy to server
+    needs: [backend-test, frontend-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
