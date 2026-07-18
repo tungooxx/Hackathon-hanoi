@@ -1,0 +1,24 @@
+# Default product-generation configuration.
+#
+# Category codes must match CategoryCode values. Leave category_weights empty
+# to give every selected category an equal weight.
+count: 100
+seed: 0
+categories:
+  - tu_lanh
+  - may_lanh
+  - may_giat
+  - may_say_quan_ao
+  - may_rua_chen
+  - tu_mat_tu_dong
+  - may_nuoc_nong
+  - micro_karaoke
+  - micro_thu_am_dien_thoai
+  - dong_ho_thong_minh
+  - may_tinh_de_ban
+  - man_hinh_may_tinh
+  - may_in
+  - may_tinh_bang
+category_weights: {}
+nullable_rate: 0.15
+reference_year: 2026

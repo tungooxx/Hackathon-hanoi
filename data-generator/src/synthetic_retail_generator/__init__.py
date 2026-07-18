@@ -1,10 +1,15 @@
 """Synthetic retail product catalog generator."""
 
 from synthetic_retail_generator.generator import (
+    DEFAULT_CONFIG_PATH,
+    ConfigLoadError,
+    GenerationContext,
     GenerationConfig,
+    allocate_category_counts,
     catalog_to_json,
     generate_catalog,
     generate_product,
+    load_generation_config,
     write_catalog,
 )
 from synthetic_retail_generator.models import (
@@ -31,6 +36,9 @@ __all__ = [
     "CATEGORY_MODEL_BY_CODE",
     "CATEGORY_TITLE_BY_CODE",
     "CategoryCode",
+    "ConfigLoadError",
+    "DEFAULT_CONFIG_PATH",
+    "GenerationContext",
     "GenerationConfig",
     "ProductCatalog",
     "ProductCatalogSchema",
@@ -41,9 +49,11 @@ __all__ = [
     "SchemaContractError",
     "SchemaLoadError",
     "TypeMapping",
+    "allocate_category_counts",
     "catalog_to_json",
     "generate_catalog",
     "generate_product",
+    "load_generation_config",
     "load_product_catalog_schema",
     "map_json_schema_type",
     "parse_product_catalog_schema",
