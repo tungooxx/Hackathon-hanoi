@@ -132,6 +132,10 @@ def route_after_intent(state: AgentState) -> str:
     # khi làm giàu từ web (kể cả khi phân loại ý định lỡ rơi vào off_topic).
     if state.get("product_mentions"):
         return "product_lookup"
+    # Chào hỏi thuần (chưa nêu nhu cầu) phải được đón tiếp + hỏi ngược, KHÔNG rơi vào
+    # off_topic 'chưa hỗ trợ được'. Đặt trước off_topic để thắng khi intent lỡ xếp off_topic.
+    if not state.get("category") and llm.looks_like_greeting(state["user_input"]):
+        return "greeting"
     if state["intent_type"] == "off_topic":
         return "off_topic"
     if not state.get("category"):
@@ -266,6 +270,16 @@ async def policy_node(state: AgentState) -> dict:
         w({"type": "text_chunk", "content": chunk})
     w({"type": "_stage", "stage": "policy_phrase", "ms": round((time.perf_counter() - t1) * 1000)})
     w({"type": "done", "turn_type": "policy"})
+    return {}
+
+
+async def greeting_node(state: AgentState) -> dict:
+    # Chào hỏi thuần: đón tiếp + hỏi ngược nhu cầu. Coi là 'ask' (đang gợi mở nhu cầu),
+    # KHÔNG phải off_topic — tránh giọng 'chưa hỗ trợ được' cho một câu chào.
+    w = get_stream_writer()
+    async for chunk in llm.stream_phrase("greeting", {}):
+        w({"type": "text_chunk", "content": chunk})
+    w({"type": "done", "turn_type": "ask"})
     return {}
 
 
@@ -454,10 +468,11 @@ def build_graph(*, checkpointer):
     g.add_node("resolve", resolve_node)
     g.add_node("policy", policy_node)
     g.add_node("off_topic", off_topic_node)
+    g.add_node("greeting", greeting_node)
     g.add_edge(START, "intent")
     g.add_conditional_edges("intent", route_after_intent,
                             {"retrieve": "retrieve", "policy": "policy", "off_topic": "off_topic",
-                             "product_lookup": "product_lookup", "resolve": "resolve"})
+                             "greeting": "greeting", "product_lookup": "product_lookup", "resolve": "resolve"})
     g.add_conditional_edges("retrieve", route_after_retrieve,
                             {"ask": "ask", "compare": "compare", "detail": "detail", "price_answer": "price_answer"})
     g.add_conditional_edges("product_lookup", route_after_product_lookup,
@@ -470,4 +485,5 @@ def build_graph(*, checkpointer):
     g.add_edge("resolve", END)
     g.add_edge("policy", END)
     g.add_edge("off_topic", END)
+    g.add_edge("greeting", END)
     return g.compile(checkpointer=checkpointer)

@@ -97,6 +97,26 @@ def looks_like_policy(text: str) -> bool:
     return any(kw in low for kw in _POLICY_KW)
 
 
+# Lời chào THUẦN (không kèm nhu cầu): cả câu chỉ gồm chào hỏi + vài từ xã giao.
+_GREETING_RE = re.compile(
+    r"^[\s\W]*(xin\s*chao|xin\s*chào|chao|chào|hello|helo|hallo|hi|hey|halo|alo|"
+    r"good\s*(morning|afternoon|evening)|shop\s*oi|shop\s*ơi|em\s*oi|em\s*ơi)"
+    r"[\s\W]*(shop|em|ban|bạn|ad|adm|admin|anh|chi|chị|a|c)?[\s\W]*$",
+    re.IGNORECASE,
+)
+
+
+def looks_like_greeting(text: str) -> bool:
+    """True khi tin nhắn CHỈ là chào hỏi xã giao, chưa nêu nhu cầu sản phẩm.
+
+    Lưới an toàn ở router: câu chào thuần bị model intent nhỏ xếp 'off_topic' và
+    rơi vào phrase 'chưa hỗ trợ được' (giọng chối). Chào hỏi phải được đón tiếp
+    và hỏi ngược nhu cầu. Regex neo ^...$ nên 'chào em anh muốn mua máy lạnh'
+    (có nhu cầu) KHÔNG khớp -> đi luồng tư vấn bình thường.
+    """
+    return bool(_GREETING_RE.match((text or "").strip()))
+
+
 def _mock_intent(text: str, category: str | None, expected_question: dict | None = None) -> IntentResult:
     low = text.lower()
     cat = None  # Category is resolved against real Elasticsearch data in graph.py.
@@ -234,6 +254,10 @@ def _mock_phrase(kind: str, context: dict) -> str:
     if kind == "policy_no_info":
         return ("Dạ phần này em chưa tìm thấy trong chính sách hiện có của bên em ạ.\n\n"
                 "Anh/chị vui lòng liên hệ tổng đài 1800.1060 để được hỗ trợ chính xác nhất nhé ạ.")
+    if kind == "greeting":
+        return ("Dạ em chào anh/chị ạ! 👋\n\n"
+                "Em là trợ lý tư vấn của Điện Máy Xanh. Anh/chị đang cần tìm sản phẩm điện máy nào "
+                "(máy lạnh, tủ lạnh, tivi, máy giặt...) để em hỗ trợ ngay ạ?")
     if kind == "off_topic":
         return ("Dạ em là nhân viên tư vấn điện máy của Điện Máy Xanh nên phần này em chưa hỗ trợ được ạ.\n\n"
                 "Em chỉ tư vấn các sản phẩm điện máy (máy lạnh, tủ lạnh, tivi, máy giặt...). "
@@ -242,8 +266,8 @@ def _mock_phrase(kind: str, context: dict) -> str:
 
 
 async def stream_phrase(kind: str, context: dict) -> AsyncIterator[str]:
-    """kind: ask | compare | detail | no_match | off_topic | policy | policy_no_info."""
-    if MOCK_LLM or kind in ("off_topic", "policy_no_info"):
+    """kind: ask | compare | detail | no_match | off_topic | greeting | policy | policy_no_info."""
+    if MOCK_LLM or kind in ("off_topic", "greeting", "policy_no_info"):
         async for chunk in _mock_stream(_mock_phrase(kind, context)):
             yield chunk
         return
