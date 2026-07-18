@@ -19,7 +19,15 @@ def _price_options(products: list[dict]) -> list[float]:
     prices = sorted({float(p["price_sale"]) for p in products if p.get("price_sale")})
     if not prices:
         return []
-    indexes = {max(0, round((len(prices) - 1) * portion)) for portion in (0.25, 0.55, 0.8)}
+    # Include the affordable edge of the observed range.  Sampling only
+    # quartiles often leaves the already-cheapest default top three intact,
+    # incorrectly giving the budget question zero Decision-Gap utility.
+    # These are catalog values, not an invented product/category rule.
+    indexes = {
+        0,
+        min(len(prices) - 1, 1),
+        *{max(0, round((len(prices) - 1) * portion)) for portion in (0.25, 0.55, 0.8)},
+    }
     return [prices[index] for index in sorted(indexes)]
 
 
@@ -117,11 +125,10 @@ def choose_next_question(
             changes.append(_top3_change(baseline, _signature(simulated_products, simulated_priorities, catalog_preferences)))
         expected_change = sum(changes) / len(changes)
         utility = expected_change / max(0.1, float(definition.customer_effort))
-        # Required ontology questions are eligibility gates: retain them even
-        # when this catalog's current top-3 happens to be stable.
-        if (definition.required or utility > 0) and (
-            best is None or (definition.required, utility) > (best[0], best[1])
-        ):
+        # A question earns its place only by changing the current shortlist.
+        # Ontology "required" is semantic metadata, not permission to make a
+        # shopper answer a question that has zero measurable catalog effect.
+        if utility > 0 and (best is None or utility > best[1]):
             best = (definition.required, utility, slot, expected_change)
 
     if best is None:

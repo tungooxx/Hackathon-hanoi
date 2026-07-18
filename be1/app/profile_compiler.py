@@ -7,16 +7,19 @@ returns only mappings the current catalog can support.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from filelock import FileLock
 
 from .config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_SMALL
+
+logger = logging.getLogger(__name__)
 
 
 class RuntimeQuestion(BaseModel):
@@ -125,8 +128,14 @@ def _validate_questions(
             if not mapped_values or any(not raw or raw not in observed for raw in mapped_values):
                 errors.append(f"{prefix}.answer_values must contain only non-empty exact raw values for {question.field!r}")
                 continue
-        if question.ordered_values and any(raw not in observed for raw in question.ordered_values):
-            errors.append(f"{prefix}.ordered_values contains a value absent from {question.field!r}")
+        if question.ordered_values and any(
+            raw not in observed and raw not in question.answer_values
+            for raw in question.ordered_values
+        ):
+            errors.append(
+                f"{prefix}.ordered_values must contain catalog values or executable answer keys "
+                f"for {question.field!r}"
+            )
             continue
         if question.requires_technical_knowledge or question.customer_effort > 0.7:
             errors.append(f"{prefix} is unsuitable for an ordinary shopper; omit it or ask a lower-effort need")
@@ -136,16 +145,40 @@ def _validate_questions(
     return valid, errors
 
 
+def get_cached_profile(category: str, products: list[dict]) -> RuntimeProfile | None:
+    """Return a validated cache hit without invoking the profile compiler."""
+    fingerprint = _fingerprint(category, products)
+    fields = sorted({key for product in products for key in product.get("attributes", {})})
+    standard_fields = ["price_sale", "price_original"]
+    values = {
+        field: sorted({str(product.get("attributes", {}).get(field)) for product in products
+                       if product.get("attributes", {}).get(field) not in (None, "")})[:20]
+        for field in fields
+    }
+    values.update({
+        field: sorted({str(product.get(field)) for product in products if product.get(field) is not None})[:20]
+        for field in standard_fields
+    })
+    cached = _load_cache().get(category)
+    if not cached or cached.get("catalog_fingerprint") != fingerprint:
+        return None
+    try:
+        cached_profile = RuntimeProfile.model_validate(cached)
+        cached_valid, cached_errors = _validate_questions(
+            cached_profile.questions, set([*fields, *standard_fields]), values
+        )
+    except (ValidationError, TypeError, ValueError) as error:
+        logger.warning("Rejected runtime profile cache for %r: %s", category, error)
+        return None
+    if cached_errors or len(cached_valid) != len(cached_profile.questions):
+        logger.warning("Rejected runtime profile cache for %r: %s", category, cached_errors)
+        return None
+    return cached_profile.model_copy(update={"questions": cached_valid})
+
+
 async def compile_profile(category: str, ontology_questions: list[dict], products: list[dict]) -> RuntimeProfile:
     """Create or reuse a profile from ontology questions and actual catalog evidence."""
     fingerprint = _fingerprint(category, products)
-    cache = _load_cache()
-    cached = cache.get(category)
-    if cached and cached.get("catalog_fingerprint") == fingerprint:
-        return RuntimeProfile.model_validate(cached)
-
-    from langchain_openai import ChatOpenAI
-
     fields = sorted({key for product in products for key in product.get("attributes", {})})
     standard_fields = ["price_sale", "price_original"]
     samples = [product.get("attributes", {}) for product in products[:3]]
@@ -158,16 +191,36 @@ async def compile_profile(category: str, ontology_questions: list[dict], product
         field: sorted({str(product.get(field)) for product in products if product.get(field) is not None})[:20]
         for field in standard_fields
     })
+
+    if cached_profile := get_cached_profile(category, products):
+        return cached_profile
+
+    from langchain_openai import ChatOpenAI
     # The adaptive ontology determines which broad decision modules have
     # evidence in this category; the LLM still has to bind any question to an
     # exact catalog field/value before it reaches the chat runtime.
     try:
-        from .adaptive_ontology import AdaptCategoryRequest, AdaptiveOntologyEngine
-        engine = AdaptiveOntologyEngine(_ROOT.parent / "data" / "ontology_data.json", _ROOT / "data" / "adaptive_profiles.json")
-        adapted = engine.adapt(AdaptCategoryRequest(
-            category_name=category, raw_fields=fields, sample_products=samples,
-        ))
-        active_modules = [module.label for module in adapted.active_modules]
+        from .adaptive_ontology import (
+            ALIASES,
+            REVIEWED_SEED_CATEGORIES,
+            AdaptCategoryRequest,
+            AdaptiveOntologyEngine,
+            normalize_text,
+        )
+        canonical = ALIASES.get(normalize_text(category), category)
+        if canonical in REVIEWED_SEED_CATEGORIES:
+            # Reviewed categories already have an approved ontology seed.
+            # They must never be materialized into adaptive_profiles.json.
+            active_modules = []
+        else:
+            engine = AdaptiveOntologyEngine(
+                _ROOT.parent / "data" / "ontology_data.json",
+                _ROOT / "data" / "adaptive_profiles.json",
+            )
+            adapted = engine.adapt(AdaptCategoryRequest(
+                category_name=category, raw_fields=fields, sample_products=samples,
+            ))
+            active_modules = [module.label for module in adapted.active_modules]
     except Exception:
         active_modules = []
     prompt = {

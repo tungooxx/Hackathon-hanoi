@@ -90,8 +90,8 @@ class PrototypeFulfillmentProvider(FulfillmentProvider):
         return FulfillmentResult(
             available=True,
             prototype=True,
-            message=(f"Dạ có ạ. Trong prototype, mẫu anh/chị đang xem có hàng tại {region}. "
-                     "Phần này đang dùng dữ liệu demo để minh hoạ kiểm tra theo khu vực ạ."),
+            message=(f"Dạ có ạ. Mẫu anh/chị đang xem hiện có thể giao tại {region} ạ. "
+                     "Anh/chị cho em biết thêm nếu muốn kiểm tra thời gian giao hàng nhé."),
         )
 
 

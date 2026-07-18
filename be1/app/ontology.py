@@ -86,23 +86,55 @@ def get_slot_schema(category: str, products: list[dict[str, Any]] | None = None)
     return result
 
 
-async def get_runtime_slot_schema(category: str, products: list[dict[str, Any]]) -> list[SlotDef]:
-    """Use reviewed relations first, then an LLM-compiled catalog profile.
+def _catalog_fallback_schema(category: str, products: list[dict[str, Any]]) -> list[SlotDef]:
+    """Build executable, low-effort question candidates from catalog evidence.
 
-    The compiler may only bind an existing ontology question to an exact raw
-    catalog field.  It cannot invent a question, field, or category rule.
+    This is the no-mapping fallback.  It knows no product category: every
+    candidate is derived from an observed field/value set, then Decision-Gap
+    decides whether it can actually change the top-K before asking it.
     """
-    reviewed = get_slot_schema(category, products)
-    if reviewed:
-        return reviewed
-    from .profile_compiler import compile_profile
+    result: list[SlotDef] = []
+    prices = {product.get("price_sale") for product in products if product.get("price_sale") not in (None, 0)}
+    if len(prices) >= 2:
+        result.append(SlotDef(
+            name="Q_FALLBACK_BUDGET",
+            maps_to_field="price_sale",
+            slot_type="soft",
+            required=False,
+            ask_hint="Ngân sách dự kiến của anh/chị khoảng bao nhiêu để em lọc các mẫu phù hợp? Nếu chưa muốn giới hạn giá, mình có thể nói không ưu tiên.",
+            question_type="numeric",
+            operation="max",
+            unit="VND",
+            customer_effort=0.2,
+        ))
+
+    # Do not expose arbitrary dirty field labels as customer questions. A raw
+    # enum may affect top-K yet still be meaningless to a shopper. Such fields
+    # require a validated runtime mapping (normally built/prewarmed off the
+    # request path) before they become eligible to ask.
+    return result
+
+
+async def get_runtime_slot_schema(category: str, products: list[dict[str, Any]]) -> list[SlotDef]:
+    """Return executable question candidates for the current catalog.
+
+    A reviewed seed with only a field relationship is not executable by itself:
+    it lacks the raw-value map needed to interpret a natural "có/không" reply.
+    Do not block a customer turn on an LLM compiler to fill that gap.  For that
+    case, use the deterministic catalog fallback and let Decision-Gap decide
+    whether any candidate is worth asking. Runtime-profile compilation remains
+    for categories without reviewed seed questions and should be prewarmed.
+    """
+    from .profile_compiler import get_cached_profile
 
     attributes = {key for product in products for key in product.get("attributes", {})}
     standard_fields = {"price_sale", "price_original"}
     available_fields = attributes | standard_fields
-    if not attributes:
+    if not attributes and not any(product.get("price_sale") for product in products):
         return []
-    profile = await compile_profile(category, questions_for_category(category), products)
+    profile = get_cached_profile(category, products)
+    if profile is None:
+        return _catalog_fallback_schema(category, products)
     result: list[SlotDef] = []
     for question in profile.questions:
         if question.field not in available_fields:
@@ -153,7 +185,10 @@ async def get_runtime_slot_schema(category: str, products: list[dict[str, Any]])
             boolean_true_values=question.boolean_true_values,
             boolean_false_values=question.boolean_false_values,
         ))
-    return result
+    # Do not recommend immediately merely because the ontology-to-catalog
+    # compiler had no valid mapping.  Let Decision-Gap score catalog-grounded
+    # fallback candidates; if none changes top-K it will still recommend.
+    return result or _catalog_fallback_schema(category, products)
 
 
 _GROUPED_NUMBER_RE = re.compile(r"(?<!\d)\d{1,3}(?:[.,]\d{3})+(?!\d)")
@@ -233,7 +268,11 @@ def _value_constraint(definition: SlotDef, value: Any, products: list[dict]) -> 
     if mapped is None and polarity is not None:
         mapped = next((raw_values for answer, raw_values in definition.value_map.items()
                        if _answer_polarity(answer) is polarity), None)
-    if mapped:
+    if mapped is not None:
+        # An explicit answer key with no raw catalog values is the profile's
+        # catalog-grounded opt-out (for example, "Không ưu tiên").
+        if not mapped:
+            return None
         return ("equals", {_normal(raw) for raw in mapped})
 
     # Numeric predicates work even when every supplier formats the value

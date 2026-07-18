@@ -164,7 +164,28 @@ class AdaptiveOntologyEngine:
         with self._registry_lock:
             if not self.registry_path.exists():
                 self.registry_path.write_text("{}", encoding="utf-8")
+        self._compact_registry()
         self._by_category = self._index_seed()
+
+    def _compact_registry(self) -> None:
+        """Keep the latest cached profile per normalized category."""
+        with self._registry_lock:
+            registry = json.loads(self.registry_path.read_text(encoding="utf-8"))
+            compacted: dict[str, tuple[str, dict[str, Any]]] = {}
+            for profile_id, stored_profile in registry.items():
+                category_key = normalize_text(
+                    str(stored_profile.get("normalized_category") or stored_profile.get("category") or profile_id)
+                )
+                previous = compacted.get(category_key)
+                current_time = str(stored_profile.get("provenance", {}).get("generated_at", ""))
+                previous_time = str(previous[1].get("provenance", {}).get("generated_at", "")) if previous else ""
+                if previous is None or current_time >= previous_time:
+                    compacted[category_key] = (profile_id, stored_profile)
+            pruned = {profile_id: profile for profile_id, profile in compacted.values()}
+            if len(pruned) != len(registry):
+                temporary = self.registry_path.with_suffix(f"{self.registry_path.suffix}.{os.getpid()}.tmp")
+                temporary.write_text(json.dumps(pruned, ensure_ascii=False, indent=2), encoding="utf-8")
+                os.replace(temporary, self.registry_path)
 
     def _index_seed(self) -> dict[str, dict[str, list[dict[str, Any]]]]:
         result: dict[str, dict[str, list[dict[str, Any]]]] = {}
@@ -276,6 +297,17 @@ class AdaptiveOntologyEngine:
     def _store(self, profile: AdaptedOntologyResponse) -> None:
         with self._registry_lock:
             registry = json.loads(self.registry_path.read_text(encoding="utf-8"))
+            # A profile ID includes catalog evidence, so catalog refreshes and
+            # force-regeneration produce new IDs. This registry is a runtime
+            # cache, not a version archive: retain only the newest profile for
+            # each canonical category to prevent unbounded growth.
+            category_key = normalize_text(profile.normalized_category)
+            for stored_id, stored_profile in list(registry.items()):
+                stored_category_key = normalize_text(
+                    str(stored_profile.get("normalized_category") or stored_profile.get("category") or "")
+                )
+                if stored_category_key == category_key:
+                    registry.pop(stored_id)
             registry[profile.profile_id] = profile.model_dump(mode="json")
             temporary = self.registry_path.with_suffix(f"{self.registry_path.suffix}.{os.getpid()}.tmp")
             temporary.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -313,14 +345,11 @@ class AdaptiveOntologyEngine:
         else:
             mode, coverage, sources, family = "GENERATED_DISTANT", "PROVISIONAL", [], "unknown_product"
             items = self._category_items(CORE_CATEGORY)
-            active_names = [state.label for state in self._module_states(request, []) if state.status == "REQUIRED"]
             slug = re.sub(r"[^A-Z0-9]+", "_", normalize_text(category).upper()).strip("_") or "UNKNOWN"
             items["concepts"].extend({"id": f"GEN_{slug}_ATTR_{index:03}", "label": field, "canonical": field,
                 "type": "ProductAttribute", "category": category, "primarySource": "Catalog", "acquisition": "Retrieved",
                 "status": "PROVISIONAL", "provenance": {"source_type": "LLM", "confidence": 0.35, "review_status": "PENDING"}}
                 for index, field in enumerate(request.raw_fields, 1))
-            if not request.raw_fields:
-                active_names = []
         concept_ids = {item.get("id") for item in items["concepts"]}
         items["relationships"] = [relationship for relationship in items["relationships"]
                                   if relationship.get("source") in concept_ids and relationship.get("target") in concept_ids]

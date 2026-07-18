@@ -50,6 +50,8 @@ class AgentState(TypedDict, total=False):
     category_candidates: list[str]
     fulfillment_context: dict[str, str]
     awaiting_fulfillment: bool
+    fulfillment_for_shortlist: bool
+    fulfillment_resume_comparison: bool
     fulfillment_candidates: list[str]
     catalog_preferences: list[dict[str, str]]
     # Session-history agent: cumulative compressed Markdown + uncompressed tail.
@@ -68,7 +70,11 @@ def _customer_visible_slots(slots: dict[str, Any], schema: list[Any] | None = No
     """Never expose runtime IDs or executor sentinels in the UI funnel."""
     visible = {
         key: value for key, value in slots.items()
-        if not key.startswith("Q_RUNTIME_") and value != ontology._SKIP_ANSWER
+        # Question IDs are executor state, not customer-facing filters.  This
+        # covers both LLM-compiled and catalog-fallback IDs.
+        if (not key.startswith("Q_")
+            and key not in {"price_sale", "price_original"}
+            and value != ontology._SKIP_ANSWER)
     }
     for definition in schema or []:
         value = slots.get(definition.name)
@@ -141,9 +147,21 @@ async def intent_node(state: AgentState) -> dict:
     catalog_lookup_failed = False
     category_candidates: list[str] = []
     try:
-        # Resolve against the real category registry even during an active
-        # question, because customers may explicitly change product type.
+        # A reply to an active question is data for that question, not fresh
+        # category-search input.  Fuzzy discovery can otherwise turn ordinary
+        # answers such as "áo sơ mi công sở" into an unrelated catalog
+        # category. The intent prompt explicitly marks a real topic switch via
+        # active_question_override, which is the only case allowed to resolve.
         resolved_category, category_candidates = await product_repo.resolve_category_candidates(state["user_input"])
+        explicit_category_label = bool(
+            resolved_category
+            and product_repo._contains_label(
+                product_repo._normal(state["user_input"]),
+                product_repo._normal(resolved_category),
+            )
+        )
+        if expected_question and not result.active_question_override and not explicit_category_label:
+            resolved_category, category_candidates = None, []
         # A real category label inside a short answer may also name the feature
         # being discussed (for example "loa lớn" while answering an audio
         # question). Treat it as an answer when that catalog label overlaps the
@@ -374,6 +392,12 @@ async def retrieve_node(state: AgentState) -> dict:
 
 
 def route_after_intent(state: AgentState) -> str:
+    user_input = state.get("user_input", "")
+    # A pure greeting contains no shopping intent.  It must win over a category
+    # hallucinated by the intent model, otherwise "chào" can enter retrieval
+    # for an unrelated catalog category.
+    if llm.looks_like_greeting(user_input):
+        return "greeting"
     # Khách đang trả lời câu hỏi nhu cầu của luồng "sản phẩm lạ" -> tiếp tục resolve.
     if state.get("enrich_pending"):
         return "resolve"
@@ -394,20 +418,22 @@ def route_after_intent(state: AgentState) -> str:
     # nhầm 'bảo hành ip8' thành product_mentions. Đặt SAU gate selected_index/
     # wants_product_details ở trên nên 'bảo hành mẫu vừa chọn' vẫn ra chi tiết SP, không
     # bị nhánh 'sản phẩm lạ' cướp thành câu 'nới lỏng bộ lọc' vô nghĩa.
-    if llm.looks_like_policy(state["user_input"]):
+    if llm.looks_like_policy(user_input):
         return "policy"
     if state.get("category_candidates"):
         return "clarify_category"
     if state.get("catalog_lookup_failed"):
         return "catalog_unavailable"
-    # Khách nêu tên/mã sản phẩm cụ thể là tín hiệu mua hàng rõ ràng -> tra kho trước
-    # khi làm giàu từ web (kể cả khi phân loại ý định lỡ rơi vào off_topic).
-    if state.get("product_mentions"):
+    # Only use the expensive name/model lookup when the category is still
+    # unknown.  A generic category phrase can be returned in product_mentions
+    # by an LLM ("bàn ủi", "tivi"); sending it to search_catalog returns a
+    # broad hit list and bypasses retrieve + Decision-Gap incorrectly.  Once a
+    # category is resolved, retrieve_node already finds an exact named model
+    # within that category via product_repo.find_named_product().
+    if state.get("product_mentions") and not state.get("category"):
         return "product_lookup"
     # Chào hỏi thuần (chưa nêu nhu cầu) phải được đón tiếp + hỏi ngược, KHÔNG rơi vào
     # off_topic 'chưa hỗ trợ được'. Đặt trước off_topic để thắng khi intent lỡ xếp off_topic.
-    if not state.get("category") and llm.looks_like_greeting(state["user_input"]):
-        return "greeting"
     if state["intent_type"] == "off_topic":
         return "off_topic"
     if not state.get("category"):
@@ -433,7 +459,16 @@ def route_after_retrieve(state: AgentState) -> str:
         return "detail"
     if state.get("price_order"):
         return "price_answer"
+    # A shortlist that already fits on the comparison surface is actionable.
+    # Do not make the shopper answer another preference merely because it can
+    # reshuffle those same few products; show their trade-offs instead.
+    if len(state["candidates"]) <= COMPARE_THRESHOLD:
+        if fulfillment.fulfillment_provider.required_context(state.get("fulfillment_context", {})):
+            return "fulfillment_prompt"
+        return "compare"
     if state["intent_type"] == "force_answer":
+        if fulfillment.fulfillment_provider.required_context(state.get("fulfillment_context", {})):
+            return "fulfillment_prompt"
         return "compare"
     started = time.perf_counter()
     nq = choose_next_question(
@@ -441,7 +476,11 @@ def route_after_retrieve(state: AgentState) -> str:
         _slot_defs(state.get("question_schema")) or None, state.get("catalog_preferences"),
     )
     get_stream_writer()({"type": "_stage", "stage": "decision_gap", "ms": round((time.perf_counter() - started) * 1000)})
-    return "ask" if nq else "compare"
+    if nq:
+        return "ask"
+    if fulfillment.fulfillment_provider.required_context(state.get("fulfillment_context", {})):
+        return "fulfillment_prompt"
+    return "compare"
 
 
 async def ask_node(state: AgentState) -> dict:
@@ -457,18 +496,26 @@ async def ask_node(state: AgentState) -> dict:
     w({"type": "question", "slot": nq.slot, "reason": nq.reason})
     t0 = time.perf_counter()
     chunks: list[str] = []
-    async for chunk in llm.stream_phrase("ask", _phrase_context(state, {
-        "category": state["category"],
-        "question_slot": nq.slot,
-        "ask_hint": schema[nq.slot].ask_hint,
-        "question_type": schema[nq.slot].question_type,
-        "unit": schema[nq.slot].unit,
-        "catalog_field": schema[nq.slot].maps_to_field,
-        "candidate_count": len(state["candidates"]),
-        "slots": state["slots"],
-    })):
-        chunks.append(chunk)
-        w({"type": "text_chunk", "content": chunk})
+    definition = schema[nq.slot]
+    if nq.slot.startswith("Q_FALLBACK_"):
+        # This path is intentionally data-derived and already has a safe,
+        # customer-facing question. Avoid another LLM round-trip that can turn
+        # one fallback question into several speculative technical questions.
+        chunks.append(definition.ask_hint)
+        w({"type": "text_chunk", "content": definition.ask_hint})
+    else:
+        async for chunk in llm.stream_phrase("ask", _phrase_context(state, {
+            "category": state["category"],
+            "question_slot": nq.slot,
+            "ask_hint": definition.ask_hint,
+            "question_type": definition.question_type,
+            "unit": definition.unit,
+            "catalog_field": definition.maps_to_field,
+            "candidate_count": len(state["candidates"]),
+            "slots": state["slots"],
+        })):
+            chunks.append(chunk)
+            w({"type": "text_chunk", "content": chunk})
     w({"type": "_stage", "stage": "ask_phrase", "ms": round((time.perf_counter() - t0) * 1000)})
     w({"type": "done", "turn_type": "ask"})
     return {
@@ -813,15 +860,32 @@ async def fulfillment_prompt_node(state: AgentState) -> dict:
     w({"type": "text_chunk", "content": fulfillment.fulfillment_provider.question(context_key or "region")})
     w({"type": "done", "turn_type": "fulfillment_prompt"})
     product = state.get("explicit_product")
+    shortlist_request = product is None and not state.get("selected_index")
     if product is None and state.get("candidates"):
         shortlist = rank_top3(state["candidates"], state["priorities"], state.get("catalog_preferences"))
         index = min(max(0, (state.get("selected_index") or 1) - 1), len(shortlist) - 1)
         product = shortlist[index]
-    return {"awaiting_fulfillment": True, "selected_sku": product.get("sku") if product else None}
+    return {
+        "awaiting_fulfillment": True,
+        "fulfillment_for_shortlist": shortlist_request,
+        "selected_sku": product.get("sku") if product else None,
+    }
 
 
 async def fulfillment_check_node(state: AgentState) -> dict:
     w = get_stream_writer()
+    if state.get("fulfillment_for_shortlist"):
+        region = state["fulfillment_context"]["region"]
+        w({"type": "text_chunk", "content": (
+            f"Dạ các mẫu đang phù hợp đều có thể giao tại {region} ạ. "
+            "Em gửi anh/chị các lựa chọn để mình so sánh nhé."
+        )})
+        return {
+            "awaiting_fulfillment": False,
+            "fulfillment_for_shortlist": False,
+            "fulfillment_resume_comparison": True,
+            "selected_sku": None,
+        }
     product = state.get("explicit_product")
     selected_sku = state.get("selected_sku")
     if product is None and selected_sku:
@@ -833,7 +897,17 @@ async def fulfillment_check_node(state: AgentState) -> dict:
     result = await fulfillment.fulfillment_provider.check(product["sku"], state["fulfillment_context"])
     w({"type": "text_chunk", "content": result.message})
     w({"type": "done", "turn_type": "fulfillment_check"})
-    return {"awaiting_fulfillment": False, "selected_sku": None}
+    return {
+        "awaiting_fulfillment": False,
+        "fulfillment_for_shortlist": False,
+        "fulfillment_resume_comparison": False,
+        "selected_sku": None,
+    }
+
+
+def route_after_fulfillment_check(state: AgentState) -> str:
+    """Only a shortlist availability check continues into a recommendation."""
+    return "compare" if state.get("fulfillment_resume_comparison") else "end"
 
 
 async def fulfillment_clarify_node(state: AgentState) -> dict:
@@ -890,6 +964,10 @@ def build_graph(*, checkpointer):
     g.add_edge("catalog_unavailable", END)
     g.add_edge("clarify_category", END)
     g.add_edge("fulfillment_prompt", END)
-    g.add_edge("fulfillment_check", END)
+    g.add_conditional_edges(
+        "fulfillment_check",
+        route_after_fulfillment_check,
+        {"compare": "compare", "end": END},
+    )
     g.add_edge("fulfillment_clarify", END)
     return g.compile(checkpointer=checkpointer)

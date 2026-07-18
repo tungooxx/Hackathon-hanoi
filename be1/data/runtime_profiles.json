@@ -1,89 +1,94 @@
 {
   "ban ui": {
     "category": "ban ui",
-    "catalog_fingerprint": "cdd0b25554f07ba7417c3e8ba47aef5503f0c156a0532959a0913e7a99bd235f",
+    "catalog_fingerprint": "5dc745bb571115a906f261950e39727d0a4d518082b284ccd8e1340d293bf29b",
     "questions": [
       {
-        "slot": "Q_GEN_SPACE",
-        "question": "Khu vực lắp đặt có giới hạn chiều cao, ngang hoặc sâu không?",
+        "slot": "CTX_BUDGET_MAX",
+        "question": "Ngân sách tối đa của bạn cho bàn ủi là bao nhiêu (VND)?",
         "question_type": "numeric",
         "possible_answers": [
-          "Cao tối đa (cm)",
-          "Ngang tối đa (cm)",
-          "Sâu tối đa (cm)"
+          "Số tiền VND"
         ],
-        "field": "Kích thước - Khối lượng sản phẩm",
+        "answer_values": {},
+        "field": "price_sale",
         "operation": "max",
-        "hard_gate": true
+        "ordered_values": [],
+        "unit": "VND",
+        "hard_gate": false,
+        "source": "ontology",
+        "customer_effort": 0.3,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [],
+        "boolean_false_values": []
       },
       {
-        "slot": "Q_IRON_VERTICAL",
-        "question": "Bạn có cần ủi quần áo khi đang treo theo chiều dọc không?",
+        "slot": "CTX_IRON_VERTICAL_NEED",
+        "question": "Bạn có muốn ủi quần áo treo theo chiều dọc không?",
         "question_type": "boolean",
         "possible_answers": [
           "Có",
           "Không"
         ],
-        "field": "Chức năng",
-        "operation": "contains",
-        "hard_gate": true
-      },
-      {
-        "slot": "Q_IRON_SAFETY",
-        "question": "Tính năng tự ngắt an toàn quan trọng với bạn ở mức nào?",
-        "question_type": "choice",
-        "possible_answers": [
-          "Thấp",
-          "Vừa",
-          "Cao"
-        ],
-        "field": "Chế độ an toàn",
-        "operation": "contains",
-        "hard_gate": false
-      },
-      {
-        "slot": "Q_IRON_FABRIC",
-        "question": "Bạn có thường ủi vải mỏng hoặc chất liệu dễ hư do nhiệt không?",
-        "question_type": "boolean",
-        "possible_answers": [
-          "Có",
-          "Không"
-        ],
+        "answer_values": {},
         "field": "Tiện ích",
         "operation": "contains",
-        "hard_gate": false
-      }
-    ],
-    "provisional": true
-  },
-  "Tivi": {
-    "category": "Tivi",
-    "catalog_fingerprint": "d67d0c643f7dddc00675562f0507a84e970087e0ca22b5410a76f8155ddce881",
-    "questions": [
-      {
-        "slot": "Q_GEN_SPACE",
-        "question": "Khu vực lắp đặt có giới hạn chiều cao, ngang hoặc sâu không?",
-        "question_type": "numeric",
-        "possible_answers": [
-          "Cao tối đa (cm)",
-          "Rộng tối đa (cm)",
-          "Sâu tối đa (cm)"
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": true,
+        "source": "ontology",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "Chế độ xả cặn Đèn, âm thanh báo xả cặn Ủi nằm Móc treo gập được Ủi quần áo treo Tự điều chỉnh nhiệt độ từng loại vải (OptimalTEMP) Điều chỉnh được chiều cao Không tạo vết cháy Diệt khuẩn và loại bỏ mùi hôi Có bánh xe di chuyển"
         ],
-        "field": "Kích thước có chân, đặt bàn / Kích thước không chân, treo tường",
-        "operation": "contains",
-        "hard_gate": true
+        "boolean_false_values": []
       },
       {
-        "slot": "Q_GEN_SMART",
-        "question": "Bạn có cần điều khiển qua điện thoại hoặc Wi‑Fi không?",
+        "slot": "GEN_PORTABILITY",
+        "question": "Bạn có ưu tiên bàn ủi cầm tay, dễ mang đi không?",
         "question_type": "boolean",
         "possible_answers": [
           "Có",
           "Không"
         ],
-        "field": "Điều khiển tivi bằng điện thoại",
+        "answer_values": {},
+        "field": "Loại bàn ủi",
         "operation": "equals",
-        "hard_gate": false
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": false,
+        "source": "generated",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "Bàn ủi hơi nước cầm tay"
+        ],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "GEN_SAFETY_AUTO_SHUTOFF",
+        "question": "Bạn có muốn tính năng tự ngắt khi quá nhiệt để an toàn không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "answer_values": {},
+        "field": "Chế độ an toàn",
+        "operation": "contains",
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": false,
+        "source": "generated",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "Tự ngắt khi quá nhiệt",
+          "Tự ngắt khi quá nhiệt, tự ngắt điện khi không sử dụng, chuyển sang chế độ chờ khi nước cạn",
+          "Tự ngắt điện khi không sử dụng, tự ngắt điện khi quá nhiệt"
+        ],
+        "boolean_false_values": []
       }
     ],
     "provisional": true
@@ -91,120 +96,6 @@
   "tivi": {
     "category": "tivi",
     "catalog_fingerprint": "ac8705687bcd2ff677290f7cbf1eb771c257953e99c29073fa66a701e1f607fe",
-    "questions": [
-      {
-        "slot": "CTX_BUDGET_MAX",
-        "question": "Ngân sách tối đa của bạn là bao nhiêu (VND)?",
-        "question_type": "numeric",
-        "possible_answers": [
-          "Số tiền VND"
-        ],
-        "answer_values": {
-          "unit": [
-            "VND"
-          ],
-          "hard_gate": [
-            "Yes"
-          ]
-        },
-        "field": "price_sale",
-        "operation": "max",
-        "ordered_values": [],
-        "unit": "VND",
-        "hard_gate": true,
-        "source": "ontology",
-        "customer_effort": 0.2,
-        "requires_technical_knowledge": false,
-        "boolean_true_values": [],
-        "boolean_false_values": []
-      },
-      {
-        "slot": "PREF_SMART_CONTROL",
-        "question": "Bạn có cần điều khiển tivi qua điện thoại không?",
-        "question_type": "boolean",
-        "possible_answers": [
-          "Có",
-          "Không"
-        ],
-        "answer_values": {
-          "hard_gate": [
-            "No"
-          ]
-        },
-        "field": "Điều khiển tivi bằng điện thoại",
-        "operation": "equals",
-        "ordered_values": [],
-        "unit": "",
-        "hard_gate": false,
-        "source": "ontology",
-        "customer_effort": 0.1,
-        "requires_technical_knowledge": false,
-        "boolean_true_values": [
-          "SmartThings"
-        ],
-        "boolean_false_values": []
-      },
-      {
-        "slot": "GEN_03",
-        "question": "Bạn có muốn tivi hỗ trợ kết nối Bluetooth không?",
-        "question_type": "boolean",
-        "possible_answers": [
-          "Có",
-          "Không"
-        ],
-        "answer_values": {
-          "hard_gate": [
-            "No"
-          ]
-        },
-        "field": "Kết nối không dây",
-        "operation": "contains",
-        "ordered_values": [],
-        "unit": "",
-        "hard_gate": false,
-        "source": "generated",
-        "customer_effort": 0.1,
-        "requires_technical_knowledge": false,
-        "boolean_true_values": [
-          "Bluetooth 5.0",
-          "Bluetooth 5.1",
-          "Bluetooth 5.2",
-          "Bluetooth 5.3",
-          "Bluetooth 5.4",
-          "Bluetooth (Kết nối loa, thiết bị di động)",
-          "Bluetooth (Kết nối bàn phím, chuột)"
-        ],
-        "boolean_false_values": []
-      },
-      {
-        "slot": "GEN_04",
-        "question": "Bạn muốn tivi có kích thước màn hình tối đa bao nhiêu inch?",
-        "question_type": "numeric",
-        "possible_answers": [
-          "Kích thước màn hình (inch)"
-        ],
-        "answer_values": {
-          "hard_gate": [
-            "No"
-          ]
-        },
-        "field": "Kích cỡ màn hình",
-        "operation": "max",
-        "ordered_values": [],
-        "unit": "inch",
-        "hard_gate": false,
-        "source": "generated",
-        "customer_effort": 0.2,
-        "requires_technical_knowledge": false,
-        "boolean_true_values": [],
-        "boolean_false_values": []
-      }
-    ],
-    "provisional": true
-  },
-  "loa": {
-    "category": "loa",
-    "catalog_fingerprint": "9631e718ff236b5b79b6a87f6f225247f852ec0c40a12fced188e390b83a3920",
     "questions": [
       {
         "slot": "CTX_BUDGET_MAX",
@@ -222,26 +113,9 @@
         "source": "ontology",
         "customer_effort": 0.2,
         "requires_technical_knowledge": false,
-        "boolean_true_values": [],
-        "boolean_false_values": []
-      },
-      {
-        "slot": "CTX_INSTALL_SPACE",
-        "question": "Khu vực lắp đặt có giới hạn chiều cao, ngang hoặc sâu không? (đơn vị: cm)",
-        "question_type": "numeric",
-        "possible_answers": [
-          "Cao / ngang / sâu tối đa (cm)"
+        "boolean_true_values": [
+          "SmartThings"
         ],
-        "answer_values": {},
-        "field": "Kích thước loa thanh",
-        "operation": "max",
-        "ordered_values": [],
-        "unit": "cm",
-        "hard_gate": true,
-        "source": "ontology",
-        "customer_effort": 0.3,
-        "requires_technical_knowledge": false,
-        "boolean_true_values": [],
         "boolean_false_values": []
       },
       {
@@ -253,8 +127,8 @@
           "Không"
         ],
         "answer_values": {},
-        "field": "Điều khiển bằng điện thoại",
-        "operation": "equals",
+        "field": "Điều khiển tivi bằng điện thoại",
+        "operation": "contains",
         "ordered_values": [],
         "unit": "",
         "hard_gate": false,
@@ -262,64 +136,385 @@
         "customer_effort": 0.1,
         "requires_technical_knowledge": false,
         "boolean_true_values": [
-          "App Marshall (mới)"
+          "SmartThings"
         ],
         "boolean_false_values": []
       },
       {
-        "slot": "GEN_AUDIO_TECH",
-        "question": "Bạn có muốn công nghệ âm thanh Dolby Atmos hoặc DTS:X không?",
-        "question_type": "boolean",
+        "slot": "generated_resolution",
+        "question": "Bạn muốn tivi có độ phân giải tối thiểu là gì?",
+        "question_type": "choice",
         "possible_answers": [
-          "Có",
-          "Không"
+          "HD",
+          "Full HD",
+          "2K",
+          "4K (Ultra HD)",
+          "8K",
+          "Không ưu tiên"
         ],
-        "answer_values": {},
-        "field": "Công nghệ âm thanh",
-        "operation": "equals",
-        "ordered_values": [],
+        "answer_values": {
+          "HD": [
+            "HD"
+          ],
+          "Full HD": [
+            "Full HD"
+          ],
+          "2K": [
+            "2K"
+          ],
+          "4K (Ultra HD)": [
+            "4K (Ultra HD)"
+          ],
+          "8K": [
+            "8K"
+          ],
+          "Không ưu tiên": []
+        },
+        "field": "Độ phân giải",
+        "operation": "min",
+        "ordered_values": [
+          "HD",
+          "Full HD",
+          "2K",
+          "4K (Ultra HD)",
+          "8K"
+        ],
         "unit": "",
         "hard_gate": false,
         "source": "generated",
         "customer_effort": 0.2,
         "requires_technical_knowledge": false,
-        "boolean_true_values": [
-          "Dolby Atmos DTS:X"
-        ],
+        "boolean_true_values": [],
         "boolean_false_values": []
       },
       {
-        "slot": "GEN_CONNECTIVITY",
-        "question": "Bạn có cần kết nối không dây như Bluetooth, Wi‑Fi, AirPlay không?",
+        "slot": "generated_screen_size",
+        "question": "Bạn muốn tivi có kích thước màn hình tối thiểu là bao nhiêu?",
+        "question_type": "choice",
+        "possible_answers": [
+          "27 inch",
+          "32 inch",
+          "40 inch",
+          "43 inch",
+          "48 inch",
+          "50 inch",
+          "55 inch",
+          "58 inch",
+          "65 inch",
+          "70 inch",
+          "75 inch",
+          "77 inch",
+          "83 inch",
+          "85 inch",
+          "86 inch",
+          "98 inch",
+          "100 inch",
+          "115 inch",
+          "Không ưu tiên"
+        ],
+        "answer_values": {
+          "27 inch": [
+            "27 inch"
+          ],
+          "32 inch": [
+            "32 inch"
+          ],
+          "40 inch": [
+            "40 inch"
+          ],
+          "43 inch": [
+            "43 inch"
+          ],
+          "48 inch": [
+            "48 inch"
+          ],
+          "50 inch": [
+            "50 inch"
+          ],
+          "55 inch": [
+            "55 inch"
+          ],
+          "58 inch": [
+            "58 inch"
+          ],
+          "65 inch": [
+            "65 inch"
+          ],
+          "70 inch": [
+            "70 inch"
+          ],
+          "75 inch": [
+            "75 inch"
+          ],
+          "77 inch": [
+            "77 inch"
+          ],
+          "83 inch": [
+            "83 inch"
+          ],
+          "85 inch": [
+            "85 inch"
+          ],
+          "86 inch": [
+            "86 inch"
+          ],
+          "98 inch": [
+            "98 inch"
+          ],
+          "100 inch": [
+            "100 inch"
+          ],
+          "115 inch": [
+            "115 inch"
+          ],
+          "Không ưu tiên": []
+        },
+        "field": "Kích cỡ màn hình",
+        "operation": "min",
+        "ordered_values": [
+          "27 inch",
+          "32 inch",
+          "40 inch",
+          "43 inch",
+          "48 inch",
+          "50 inch",
+          "55 inch",
+          "58 inch",
+          "65 inch",
+          "70 inch",
+          "75 inch",
+          "77 inch",
+          "83 inch",
+          "85 inch",
+          "86 inch",
+          "98 inch",
+          "100 inch",
+          "115 inch"
+        ],
+        "unit": "",
+        "hard_gate": false,
+        "source": "generated",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [],
+        "boolean_false_values": []
+      }
+    ],
+    "provisional": true
+  },
+  "may lanh": {
+    "category": "may lanh",
+    "catalog_fingerprint": "17117d9b7d34ea7cb6a5d7d601bcab36f888fbd0804a845c4c732599bc42691d",
+    "questions": [
+      {
+        "slot": "CTX_BUDGET_MAX",
+        "question": "Ngân sách tối đa của bạn là bao nhiêu?",
+        "question_type": "numeric",
+        "possible_answers": [
+          "Số tiền VND"
+        ],
+        "answer_values": {},
+        "field": "price_sale",
+        "operation": "range",
+        "ordered_values": [],
+        "unit": "VND",
+        "hard_gate": true,
+        "source": "ontology",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "CTX_INSTALL_SPACE",
+        "question": "Chiều cao lắp đặt tối đa bạn có thể chấp nhận là bao nhiêu (m)?",
+        "question_type": "numeric",
+        "possible_answers": [
+          "Chiều cao (m)"
+        ],
+        "answer_values": {},
+        "field": "Chiều cao lắp đặt tối đa giữa cục nóng-lạnh",
+        "operation": "min",
+        "ordered_values": [],
+        "unit": "m",
+        "hard_gate": true,
+        "source": "ontology",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "CTX_NEED_HEATING",
+        "question": "Bạn có cần máy hỗ trợ sưởi ấm vào mùa lạnh không?",
         "question_type": "boolean",
         "possible_answers": [
           "Có",
           "Không"
         ],
         "answer_values": {},
-        "field": "Kết nối không dây",
+        "field": "Loại máy",
+        "operation": "equals",
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": true,
+        "source": "ontology",
+        "customer_effort": 0.1,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "2 chiều (có sưởi ấm)"
+        ],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "PREF_AIR_QUALITY",
+        "question": "Bạn có cần tính năng lọc không khí nâng cao (kháng khuẩn, khử mùi) không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "answer_values": {},
+        "field": "Lọc bụi, kháng khuẩn, khử mùi",
         "operation": "contains",
         "ordered_values": [],
         "unit": "",
         "hard_gate": false,
-        "source": "generated",
-        "customer_effort": 0.2,
+        "source": "ontology",
+        "customer_effort": 0.1,
         "requires_technical_knowledge": false,
         "boolean_true_values": [
-          "Kết nối Spotify AirPlay 2 Tidal Connect Bluetooth 5.3 LE Auracast Google cast"
+          "Bộ Lọc Easy Filter Plus",
+          "Bộ lọc 4 in 1",
+          "Bộ lọc 6 in 1",
+          "Bộ lọc Copper Anti-bacteria Filter",
+          "Bộ lọc bụi 2 lớp HD Công nghệ lọc kép Dual Filtration",
+          "Bộ lọc bụi 2 lớp HD Màng lọc chất môi lạnh",
+          "Bộ lọc bụi mịn PM2.5 4 trong 1",
+          "Bộ lọc không khí Hexa X6+",
+          "Bộ lọc phân tử Đồng khử khuẩn",
+          "Bộ lọc phân tử Đồng khử khuẩn Bộ lọc bụi mịn PM1.0",
+          "Bộ lọc sơ bộ tuổi thọ cao",
+          "Bộ lọc than hoạt tính",
+          "Công nghệ Plasma Ion",
+          "Công nghệ UVC Pro Bộ lọc bụi mịn PM1.0",
+          "Công nghệ UVC Pro Lưới lọc Tri-guard",
+          "Công nghệ UVC Pro Màng lọc sơ cấp Lưới lọc Tri-guard",
+          "Công nghệ chống bám bẩn Magic Coil Bộ lọc Toshiba IAQ Công nghệ tinh lọc không khí Ultra Fresh Bộ lọc bụi mịn PM1.0",
+          "Công nghệ lọc bụi, kháng khuẩn Pre-filter"
         ],
         "boolean_false_values": []
       },
       {
-        "slot": "GEN_CHANNEL_COUNT",
-        "question": "Bạn muốn hệ thống âm thanh 5.1 kênh?",
+        "slot": "CTX_PIPE_DISTANCE",
+        "question": "Khoảng cách dự kiến giữa dàn lạnh và dàn nóng là bao nhiêu mét?",
+        "question_type": "numeric",
+        "possible_answers": [
+          "Số mét"
+        ],
+        "answer_values": {},
+        "field": "Chiều dài lắp đặt ống đồng",
+        "operation": "min",
+        "ordered_values": [],
+        "unit": "m",
+        "hard_gate": true,
+        "source": "ontology",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "CTX_CORROSIVE_ENVIRONMENT",
+        "question": "Khu vực lắp đặt có gần biển hoặc môi trường dễ ăn mòn không?",
         "question_type": "boolean",
         "possible_answers": [
           "Có",
           "Không"
         ],
         "answer_values": {},
-        "field": "Số lượng kênh",
+        "field": "Chất liệu dàn tản nhiệt",
+        "operation": "contains",
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": false,
+        "source": "ontology",
+        "customer_effort": 0.1,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "Hợp kim nhôm vi dẫn Microchannel chống ăn mòn",
+          "Ống dẫn gas bằng Đồng - Lá tản nhiệt bằng Nhôm phủ lớp Gold-Fin",
+          "Ống dẫn gas bằng Đồng - Lá tản nhiệt bằng Nhôm phủ lớp Gold Fin",
+          "Ống dẫn gas bằng Đồng - Lá tản nhiệt bằng Nhôm phủ lớp Gold-Fin",
+          "Ống dẫn gas bằng Đồng - Lá tản nhiệt bằng Nhôm phủ lớp chống ăn mòn Golden Coating"
+        ],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "generated_1",
+        "question": "Bạn muốn máy lạnh có nhãn năng lượng cao (tiết kiệm điện) như thế nào?",
+        "question_type": "choice",
+        "possible_answers": [
+          "Thấp",
+          "Vừa",
+          "Cao",
+          "Không ưu tiên"
+        ],
+        "answer_values": {
+          "Thấp": [
+            "3 sao (Hiệu suất năng lượng 3.60)",
+            "3 sao (Hiệu suất năng lượng 3.92)",
+            "3 sao (Hiệu suất năng lượng 4.0)"
+          ],
+          "Vừa": [
+            "3 sao (Hiệu suất năng lượng 4.05)",
+            "3 sao (Hiệu suất năng lượng 4.16)",
+            "3 sao (Hiệu suất năng lượng 4.21)",
+            "3 sao (Hiệu suất năng lượng 4.27)",
+            "3 sao (Hiệu suất năng lượng 4.3)"
+          ],
+          "Cao": [
+            "3 sao (Hiệu suất năng lượng 4.39)",
+            "3 sao (Hiệu suất năng lượng 4.42)",
+            "3 sao (Hiệu suất năng lượng 4.49)",
+            "3 sao (Hiệu suất năng lượng 4.51)",
+            "3 sao (Hiệu suất năng lượng 4.54)",
+            "3 sao (Hiệu suất năng lượng 4.55)",
+            "3 sao (Hiệu suất năng lượng 4.57)",
+            "3 sao (Hiệu suất năng lượng 4.70)",
+            "3 sao (Hiệu suất năng lượng 4.71)",
+            "3 sao (Hiệu suất năng lượng 4.78)",
+            "4 sao (Hiệu suất năng lượng 4.72)",
+            "4 sao (Hiệu suất năng lượng 4.8)"
+          ],
+          "Không ưu tiên": []
+        },
+        "field": "Nhãn năng lượng",
+        "operation": "equals",
+        "ordered_values": [
+          "Thấp",
+          "Vừa",
+          "Cao",
+          "Không ưu tiên"
+        ],
+        "unit": "",
+        "hard_gate": false,
+        "source": "generated",
+        "customer_effort": 0.2,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [],
+        "boolean_false_values": []
+      },
+      {
+        "slot": "generated_2",
+        "question": "Bạn có ưu tiên máy lạnh có công nghệ làm lạnh nhanh không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "answer_values": {},
+        "field": "Công nghệ làm lạnh nhanh",
         "operation": "equals",
         "ordered_values": [],
         "unit": "",
@@ -328,9 +523,50 @@
         "customer_effort": 0.1,
         "requires_technical_knowledge": false,
         "boolean_true_values": [
-          "5.1 kênh"
+          "Boost",
+          "Có",
+          "Fast Cooling",
+          "Hi Power",
+          "High Power",
+          "Hyper Tech",
+          "Jet Cool",
+          "Powerful",
+          "Smart Load Control",
+          "Strong",
+          "Super",
+          "Super Jet",
+          "Turbo",
+          "Turbo Cool",
+          "Turbo Cooling",
+          "Turbo+",
+          "i-Boost",
+          "iAuto-X"
         ],
         "boolean_false_values": []
+      },
+      {
+        "slot": "generated_4",
+        "question": "Bạn có muốn máy lạnh có khả năng hoạt động 3 pha không?",
+        "question_type": "boolean",
+        "possible_answers": [
+          "Có",
+          "Không"
+        ],
+        "answer_values": {},
+        "field": "Dòng điện hoạt động",
+        "operation": "equals",
+        "ordered_values": [],
+        "unit": "",
+        "hard_gate": false,
+        "source": "generated",
+        "customer_effort": 0.1,
+        "requires_technical_knowledge": false,
+        "boolean_true_values": [
+          "3 pha"
+        ],
+        "boolean_false_values": [
+          "1 pha"
+        ]
       }
     ],
     "provisional": true

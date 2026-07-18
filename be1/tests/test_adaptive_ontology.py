@@ -1,7 +1,9 @@
+import asyncio
 from pathlib import Path
 from hashlib import sha256
 import re
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -9,6 +11,7 @@ from app.adaptive_ontology import AdaptCategoryRequest, AdaptiveOntologyEngine, 
 from app import ontology
 from app.llm import _mock_intent
 from app.graph import _customer_visible_slots, route_after_intent
+from app.decision_gap import choose_next_question
 from app.product_repo import find_named_product
 from app.product_repo import _contains_label, _is_subsequence
 from app.profile_compiler import RuntimeQuestion, _validate_questions
@@ -28,6 +31,41 @@ def test_reviewed_washer_uses_original_seed(tmp_path: Path) -> None:
     assert profile.mode == "REVIEWED"
     assert profile.coverage_level == "FULL"
     assert profile.validation.valid
+
+
+def test_pure_greeting_wins_over_hallucinated_category() -> None:
+    assert route_after_intent({
+        "user_input": "chào",
+        "category": "chăm sóc cá nhân",
+        "intent_type": "new_topic",
+    }) == "greeting"
+
+
+def test_generic_category_mention_does_not_trigger_product_lookup() -> None:
+    assert route_after_intent({
+        "user_input": "tôi muốn mua bàn ủi",
+        "category": "ban ui",
+        "product_mentions": ["bàn ủi"],
+        "intent_type": "new_topic",
+    }) == "retrieve"
+
+
+def test_unmapped_catalog_uses_decision_gap_fallback() -> None:
+    products = [
+        {"sku": "a", "price_sale": 200_000, "attributes": {"Loại bàn ủi": "Bàn ủi khô"}},
+        {"sku": "b", "price_sale": 300_000, "attributes": {"Loại bàn ủi": "Bàn ủi hơi nước"}},
+        {"sku": "c", "price_sale": 450_000, "attributes": {"Loại bàn ủi": "Bàn ủi hơi nước"}},
+    ]
+    with (
+        patch("app.profile_compiler.get_cached_profile", return_value=None),
+        patch("app.profile_compiler.compile_profile", side_effect=AssertionError("must not compile on chat path")),
+    ):
+        schema = asyncio.run(ontology.get_runtime_slot_schema("Bàn ủi", products))
+
+    assert any(item.maps_to_field == "price_sale" for item in schema)
+    question = choose_next_question("Bàn ủi", {}, [], products, [], schema)
+    assert question is not None
+    assert question.slot in {item.name for item in schema}
 
 
 def test_tv_composes_without_battery(tmp_path: Path) -> None:
