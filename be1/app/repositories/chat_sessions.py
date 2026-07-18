@@ -17,7 +17,7 @@ class ChatSessionRepository:
 
     async def create(
         self,
-        user_id: uuid.UUID,
+        user_id: uuid.UUID | None,
         *,
         title: str,
         now: datetime,
@@ -54,10 +54,12 @@ class ChatSessionRepository:
     async def get_owned(
         self,
         chat_session_id: uuid.UUID,
-        user_id: uuid.UUID,
+        user_id: uuid.UUID | None,
         *,
         for_update: bool = False,
     ) -> ChatSession | None:
+        # user_id=None matches only guest rows (user_id IS NULL), so a guest
+        # can never reach a logged-in user's session and vice versa.
         statement = select(ChatSession).where(
             ChatSession.id == chat_session_id,
             ChatSession.user_id == user_id,

@@ -33,7 +33,7 @@ class ChatSessionService:
 
     async def create(
         self,
-        user_id: uuid.UUID,
+        user_id: uuid.UUID | None,
         *,
         title: str | None = None,
     ) -> ChatSession:
@@ -62,7 +62,7 @@ class ChatSessionService:
     async def get_owned(
         self,
         chat_session_id: uuid.UUID,
-        user_id: uuid.UUID,
+        user_id: uuid.UUID | None,
     ) -> ChatSession:
         async with self.session.begin():
             chat_session = await self.chat_sessions.get_owned(
@@ -94,7 +94,7 @@ class ChatSessionService:
     async def prepare_message(
         self,
         chat_session_id: uuid.UUID,
-        user_id: uuid.UUID,
+        user_id: uuid.UUID | None,
         *,
         message: str,
     ) -> ChatSession:
@@ -117,7 +117,7 @@ class ChatSessionService:
     async def update_session_content(
         self,
         chat_session_id: uuid.UUID,
-        user_id: uuid.UUID,
+        user_id: uuid.UUID | None,
         *,
         session_content: str,
     ) -> ChatSession:

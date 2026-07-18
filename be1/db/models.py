@@ -190,10 +190,11 @@ class ChatSession(TimestampMixin, Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    # NULL user_id marks an anonymous guest session (no account, no profile).
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
     title: Mapped[str] = mapped_column(
         String(120),
@@ -214,4 +215,4 @@ class ChatSession(TimestampMixin, Base):
         server_default=text("''"),
     )
 
-    user: Mapped[User] = relationship(back_populates="chat_sessions")
+    user: Mapped[User | None] = relationship(back_populates="chat_sessions")
