@@ -19,6 +19,23 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+LANGGRAPH_MANAGED_TABLES = {
+    "checkpoint_migrations",
+    "checkpoints",
+    "checkpoint_blobs",
+    "checkpoint_writes",
+}
+
+
+def include_name(
+    name: str | None,
+    type_: str,
+    _parent_names: dict[str, str | None],
+) -> bool:
+    """Leave LangGraph-owned checkpoint schema to its own migrations."""
+
+    return not (type_ == "table" and name in LANGGRAPH_MANAGED_TABLES)
+
 
 def run_migrations_offline() -> None:
     """Render SQL without opening a database connection."""
@@ -30,6 +47,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
         compare_server_default=True,
+        include_name=include_name,
     )
 
     with context.begin_transaction():
@@ -42,6 +60,7 @@ def do_run_migrations(connection: Connection) -> None:
         target_metadata=target_metadata,
         compare_type=True,
         compare_server_default=True,
+        include_name=include_name,
     )
 
     with context.begin_transaction():

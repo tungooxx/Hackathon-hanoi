@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { streamChat, formatVnd } from '../lib/chatApi'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { useAuth } from '../auth/useAuth'
+import { createChatSession, streamChat, formatVnd } from '../lib/chatApi'
 
 function initialMessages() {
   return [
@@ -11,17 +13,15 @@ function initialMessages() {
   ]
 }
 
-// session_id cố định theo lần mở trang -> BE1 nhớ được ngữ cảnh hội thoại
-function newSessionId() {
-  return `web-${Date.now()}-${Math.floor(Math.random() * 1e4)}`
-}
-
 const PANEL_MIN_WIDTH = 300
 const PANEL_MIN_HEIGHT = 360
 const PANEL_MAX_WIDTH = 640
 const PANEL_MAX_HEIGHT = 800
 
 export default function ChatBubble() {
+  const { user, loading: authLoading } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState(initialMessages)
   const [input, setInput] = useState('')
@@ -29,7 +29,9 @@ export default function ChatBubble() {
   const [panelSize, setPanelSize] = useState({ width: 340, height: 460 })
   const [resizing, setResizing] = useState(false)
   const bodyRef = useRef(null)
-  const sessionId = useRef(newSessionId())
+  // The public chat-session ID is created by BE1. The private LangGraph thread
+  // ID never reaches the browser.
+  const chatSessionId = useRef(null)
   const abortRef = useRef(null)
   const resizeStartRef = useRef(null)
   // khóa đồng bộ chống gửi lặp: state `typing` cập nhật bất đồng bộ nên hai
@@ -39,6 +41,20 @@ export default function ChatBubble() {
   // bộ đếm id đơn điệu, đảm bảo mỗi tin có id DUY NHẤT (Date.now() gọi nhiều
   // lần có thể trùng nhau -> user và bot dính chung id -> text bot đổ nhầm bong bóng)
   const msgSeq = useRef(0)
+  const userId = user?.id
+
+  useEffect(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    chatSessionId.current = null
+    sendingRef.current = false
+    msgSeq.current = 0
+    setMessages(initialMessages())
+    setInput('')
+    setTyping(false)
+    if (!userId) setOpen(false)
+    return () => abortRef.current?.abort()
+  }, [userId])
 
   const onResizeStart = (e) => {
     e.preventDefault()
@@ -116,24 +132,41 @@ export default function ChatBubble() {
     )
   }
 
-  const send = () => {
+  const send = async () => {
     const text = input.trim()
-    if (!text || sendingRef.current) return
+    if (!text || sendingRef.current || !user) return
     sendingRef.current = true
 
-    const userId = `u-${++msgSeq.current}`
+    const userMessageId = `u-${++msgSeq.current}`
     const botId = `b-${++msgSeq.current}`
     setMessages((m) => [
       ...m,
-      { id: userId, from: 'user', segments: [text] },
+      { id: userMessageId, from: 'user', segments: [text] },
       { id: botId, from: 'bot', segments: [''], funnel: null, products: null, reason: null },
     ])
     setInput('')
     setTyping(true)
 
+    try {
+      if (!chatSessionId.current) {
+        const created = await createChatSession()
+        chatSessionId.current = created.id
+      }
+    } catch (error) {
+      patchBot(botId, {
+        segments: [
+          error?.message ||
+            'Không thể tạo cuộc trò chuyện. Anh/chị thử lại sau giúp em nhé. 🙏',
+        ],
+      })
+      sendingRef.current = false
+      setTyping(false)
+      return
+    }
+
     abortRef.current = new AbortController()
     streamChat({
-      sessionId: sessionId.current,
+      chatSessionId: chatSessionId.current,
       message: text,
       signal: abortRef.current.signal,
       handlers: {
@@ -145,11 +178,14 @@ export default function ChatBubble() {
           sendingRef.current = false
           setTyping(false)
         },
-        onError: () => {
+        onError: (error) => {
           patchBot(botId, (msg) => ({
             segments: msg.segments.join('')
               ? msg.segments
-              : ['Dạ hệ thống đang bận, anh/chị thử lại sau giúp em nhé. 🙏'],
+              : [
+                  error?.message ||
+                    'Dạ hệ thống đang bận, anh/chị thử lại sau giúp em nhé. 🙏',
+                ],
           }))
           sendingRef.current = false
           setTyping(false)
@@ -164,6 +200,16 @@ export default function ChatBubble() {
     if (e.key !== 'Enter' || e.nativeEvent.isComposing || e.keyCode === 229) return
     e.preventDefault()
     send()
+  }
+
+  const toggleChat = () => {
+    if (authLoading) return
+    if (!user) {
+      const returnTo = `${location.pathname}${location.search}${location.hash}`
+      navigate('/login', { state: { from: returnTo } })
+      return
+    }
+    setOpen((current) => !current)
   }
 
   return (
@@ -239,17 +285,23 @@ export default function ChatBubble() {
               type="text"
               placeholder="Nhập câu hỏi của bạn..."
               value={input}
+              disabled={typing}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
             />
-            <button onClick={send} aria-label="Gửi">
+            <button onClick={send} aria-label="Gửi" disabled={typing}>
               ➤
             </button>
           </div>
         </div>
       )}
 
-      <button className="chat-fab" onClick={() => setOpen((o) => !o)} aria-label="Mở chat">
+      <button
+        className="chat-fab"
+        onClick={toggleChat}
+        aria-label={user ? 'Mở chat' : 'Đăng nhập để chat'}
+        disabled={authLoading}
+      >
         <span className="chat-fab__icon">{open ? '✕' : '💬'}</span>
         {!open && <span className="chat-fab__badge">BETA</span>}
       </button>

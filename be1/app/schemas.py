@@ -38,11 +38,6 @@ class IntentResult(BaseModel):
         }
 
 
-class ChatRequest(BaseModel):
-    session_id: str
-    message: str
-
-
 # ---- Interface với Tùng (ontology) — BE1 chỉ gọi 2 hàm theo shape này ----
 
 class SlotDef(BaseModel):

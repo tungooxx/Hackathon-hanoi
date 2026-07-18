@@ -1,41 +1,94 @@
-// Cầu nối FE -> BE1 (POST /chat, SSE stream).
+// Cầu nối FE -> BE1 cho các phiên chat do server sở hữu.
 // EventSource chỉ hỗ trợ GET nên ta tự parse SSE từ fetch body reader.
 //
 // BE1 events: funnel_count | question | text_chunk | product_cards | done
 // (event type "_..." là internal, BE1 đã không forward).
 
-import { apiFetch } from './apiClient'
+import { ApiError, apiFetch, apiRequest } from './apiClient'
+
+export function createChatSession(title) {
+  return apiRequest('/chat/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(title ? { title } : {}),
+  })
+}
+
+export function listChatSessions({ limit = 50, offset = 0 } = {}) {
+  const query = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  })
+  return apiRequest(`/chat/sessions?${query}`)
+}
+
+export function getChatSession(chatSessionId) {
+  return apiRequest(`/chat/sessions/${encodeURIComponent(chatSessionId)}`)
+}
+
+export function updateChatSession(chatSessionId, title) {
+  return apiRequest(`/chat/sessions/${encodeURIComponent(chatSessionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+}
+
+export function deleteChatSession(chatSessionId) {
+  return apiRequest(`/chat/sessions/${encodeURIComponent(chatSessionId)}`, {
+    method: 'DELETE',
+  })
+}
 
 /**
  * Gọi BE1 và dispatch từng event qua handlers.
  * @param {object} p
- * @param {string} p.sessionId  - giữ cố định theo phiên để BE1 nhớ hội thoại
+ * @param {string} p.chatSessionId - ID công khai do BE1 tạo và kiểm tra ownership
  * @param {string} p.message
  * @param {AbortSignal} [p.signal]
  * @param {object} p.handlers - { onFunnel, onQuestion, onText, onProducts, onDone, onError }
  */
-export async function streamChat({ sessionId, message, signal, handlers }) {
+export async function streamChat({ chatSessionId, message, signal, handlers }) {
   const h = handlers || {}
   let res
   try {
-    res = await apiFetch('/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, message }),
-      signal,
-    })
+    res = await apiFetch(
+      `/chat/sessions/${encodeURIComponent(chatSessionId)}/messages`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+        signal,
+      },
+    )
   } catch (e) {
     h.onError?.(e)
     return
   }
   if (!res.ok || !res.body) {
-    h.onError?.(new Error(`BE1 HTTP ${res.status}`))
+    let payload = null
+    try {
+      payload = await res.json()
+    } catch {
+      // A non-JSON gateway error still receives a useful fallback below.
+    }
+    h.onError?.(
+      new ApiError(
+        payload?.error?.message || `Yêu cầu chat thất bại (${res.status}).`,
+        {
+          status: res.status,
+          code: payload?.error?.code,
+          details: payload?.error?.details,
+        },
+      ),
+    )
     return
   }
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let terminalEventReceived = false
 
   try {
     for (;;) {
@@ -49,8 +102,11 @@ export async function streamChat({ sessionId, message, signal, handlers }) {
       while ((sep = buffer.indexOf('\n\n')) !== -1) {
         const rawEvent = buffer.slice(0, sep)
         buffer = buffer.slice(sep + 2)
-        dispatch(rawEvent, h)
+        terminalEventReceived = dispatch(rawEvent, h) || terminalEventReceived
       }
+    }
+    if (!terminalEventReceived && !signal?.aborted) {
+      h.onError?.(new Error('Kết nối tới trợ lý đã kết thúc ngoài dự kiến.'))
     }
   } catch (e) {
     if (e.name !== 'AbortError') h.onError?.(e)
@@ -62,13 +118,13 @@ function dispatch(rawEvent, h) {
     .split('\n')
     .filter((l) => l.startsWith('data:'))
     .map((l) => l.replace(/^data:\s?/, ''))
-  if (!dataLines.length) return
+  if (!dataLines.length) return false
 
   let evt
   try {
     evt = JSON.parse(dataLines.join('\n'))
   } catch {
-    return
+    return false
   }
 
   switch (evt.type) {
@@ -86,10 +142,14 @@ function dispatch(rawEvent, h) {
       break
     case 'done':
       h.onDone?.(evt.turn_type)
-      break
+      return true
+    case 'error':
+      h.onError?.(new Error(evt.message || 'Trợ lý đang tạm thời gián đoạn.'))
+      return true
     default:
       break
   }
+  return false
 }
 
 export function formatVnd(n) {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -63,6 +64,12 @@ def test_database_url() -> str:
 
 class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
+        suffix = uuid.uuid4().int % 10_000_000
+        self.phone = f"090{suffix:07d}"
+        self.phone_e164 = f"+84{self.phone[1:]}"
+        self.legacy_phone = f"098{(suffix + 1) % 10_000_000:07d}"
+        self.legacy_phone_e164 = f"+84{self.legacy_phone[1:]}"
+        self.client_ip = f"198.51.100.{suffix % 250 + 1}"
         self.engine = create_async_engine(test_database_url())
         self.connection = await self.engine.connect()
         self.transaction = await self.connection.begin()
@@ -84,7 +91,7 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.dispose()
 
     async def test_register_hashes_password_and_authenticates(self) -> None:
-        registered = await self.service.register("0901234567", PASSWORD)
+        registered = await self.service.register(self.phone, PASSWORD)
 
         self.assertTrue(registered.is_new_user)
         identity = await self.service.authenticate_access_token(
@@ -99,7 +106,15 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(verify_password(PASSWORD, user.password_hash))
             self.assertIsNotNone(user.last_login_at)
 
-            sessions = list((await self.session.scalars(select(AuthSession))).all())
+            sessions = list(
+                (
+                    await self.session.scalars(
+                        select(AuthSession).where(
+                            AuthSession.user_id == registered.user.id
+                        )
+                    )
+                ).all()
+            )
             self.assertEqual(len(sessions), 1)
             self.assertNotEqual(
                 sessions[0].refresh_token_digest,
@@ -107,14 +122,14 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_registration_rejects_duplicate_and_legacy_user(self) -> None:
-        await self.service.register("0901234567", PASSWORD)
+        await self.service.register(self.phone, PASSWORD)
         with self.assertRaises(PhoneAlreadyRegistered):
-            await self.service.register("0901234567", PASSWORD)
+            await self.service.register(self.phone, PASSWORD)
 
         async with self.session.begin():
             self.session.add(
                 User(
-                    phone_e164="+84987654321",
+                    phone_e164=self.legacy_phone_e164,
                     password_hash=None,
                     is_active=True,
                     created_at=self.clock.current,
@@ -123,34 +138,35 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with self.assertRaises(PhoneAlreadyRegistered):
-            await self.service.register("0987654321", PASSWORD)
+            await self.service.register(self.legacy_phone, PASSWORD)
 
     async def test_registration_enforces_password_length(self) -> None:
         with self.assertRaises(WeakPassword):
-            await self.service.register("0901234567", "short")
+            await self.service.register(self.phone, "short")
 
     async def test_login_succeeds_and_clears_previous_failures(self) -> None:
-        registered = await self.service.register("0901234567", PASSWORD)
+        registered = await self.service.register(self.phone, PASSWORD)
         await self.service.revoke_refresh_token(registered.tokens.refresh_token)
 
         with self.assertRaises(InvalidCredentials):
             await self.service.login(
-                "0901234567",
+                self.phone,
                 "incorrect-password",
-                client_ip="127.0.0.1",
+                client_ip=self.client_ip,
             )
 
         logged_in = await self.service.login(
-            "0901234567",
+            self.phone,
             PASSWORD,
-            client_ip="127.0.0.1",
+            client_ip=self.client_ip,
         )
         self.assertFalse(logged_in.is_new_user)
 
         async with self.session.begin():
             attempts = await self.session.scalar(
                 select(func.count(AuthLoginAttempt.id)).where(
-                    AuthLoginAttempt.phone_digest == phone_login_digest("+84901234567")
+                    AuthLoginAttempt.phone_digest
+                    == phone_login_digest(self.phone_e164)
                 )
             )
             self.assertEqual(attempts, 0)
@@ -158,59 +174,63 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_credentials_are_persisted_and_rate_limited(
         self,
     ) -> None:
-        await self.service.register("0901234567", PASSWORD)
+        registered = await self.service.register(self.phone, PASSWORD)
 
         for _ in range(LOGIN_PHONE_RATE_LIMIT_COUNT):
             with self.assertRaises(InvalidCredentials):
                 await self.service.login(
-                    "0901234567",
+                    self.phone,
                     "incorrect-password",
-                    client_ip="127.0.0.1",
+                    client_ip=self.client_ip,
                 )
 
         with self.assertRaises(LoginRateLimited) as caught:
             await self.service.login(
-                "0901234567",
+                self.phone,
                 PASSWORD,
-                client_ip="127.0.0.1",
+                client_ip=self.client_ip,
             )
         self.assertGreater(caught.exception.retry_after_seconds, 0)
 
         self.clock.advance(minutes=16)
         logged_in = await self.service.login(
-            "0901234567",
+            self.phone,
             PASSWORD,
-            client_ip="127.0.0.1",
+            client_ip=self.client_ip,
         )
-        self.assertEqual(logged_in.user.id, (await self._only_user()).id)
+        self.assertEqual(logged_in.user.id, registered.user.id)
 
     async def test_unknown_phone_uses_same_public_failure(self) -> None:
         with self.assertRaises(InvalidCredentials):
             await self.service.login(
-                "0901234567",
+                self.phone,
                 PASSWORD,
-                client_ip="127.0.0.1",
+                client_ip=self.client_ip,
             )
 
         async with self.session.begin():
             attempts = await self.session.scalar(
-                select(func.count(AuthLoginAttempt.id))
+                select(func.count(AuthLoginAttempt.id)).where(
+                    AuthLoginAttempt.phone_digest
+                    == phone_login_digest(self.phone_e164)
+                )
             )
             self.assertEqual(attempts, 1)
 
     async def test_inactive_user_cannot_login(self) -> None:
-        await self.service.register("0901234567", PASSWORD)
+        registered = await self.service.register(self.phone, PASSWORD)
         async with self.session.begin():
-            user = await self._only_user()
+            user = await self.session.get(User, registered.user.id)
+            assert user is not None
             user.is_active = False
 
         with self.assertRaises(InvalidCredentials):
-            await self.service.login("0901234567", PASSWORD)
+            await self.service.login(self.phone, PASSWORD)
 
     async def test_refresh_rotation_detects_replay_and_revokes_session(
         self,
     ) -> None:
-        registered = await self.service.register("0901234567", PASSWORD)
+        registered = await self.service.register(self.phone, PASSWORD)
         original_refresh = registered.tokens.refresh_token
         rotated = await self.service.refresh(original_refresh)
 
@@ -221,7 +241,7 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.authenticate_access_token(rotated.tokens.access_token)
 
     async def test_logout_revokes_access_and_is_idempotent(self) -> None:
-        registered = await self.service.register("0901234567", PASSWORD)
+        registered = await self.service.register(self.phone, PASSWORD)
 
         self.assertTrue(
             await self.service.revoke_refresh_token(registered.tokens.refresh_token)
@@ -231,12 +251,6 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(RevokedAuthSession):
             await self.service.authenticate_access_token(registered.tokens.access_token)
-
-    async def _only_user(self) -> User:
-        user = await self.session.scalar(select(User))
-        assert user is not None
-        return user
-
 
 if __name__ == "__main__":
     unittest.main()

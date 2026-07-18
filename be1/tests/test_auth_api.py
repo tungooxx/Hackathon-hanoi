@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -50,6 +51,10 @@ def test_database_url() -> str:
 
 class AuthApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
+        suffix = uuid.uuid4().int % 10_000_000
+        self.phone = f"090{suffix:07d}"
+        self.phone_e164 = f"+84{self.phone[1:]}"
+        self.client_host = f"198.51.100.{suffix % 250 + 1}"
         self.engine = create_async_engine(test_database_url())
         self.connection = await self.engine.connect()
         self.transaction = await self.connection.begin()
@@ -72,7 +77,7 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(
                 app=app,
-                client=("127.0.0.1", 43123),
+                client=(self.client_host, 43123),
             ),
             base_url="http://localhost",
         )
@@ -116,7 +121,7 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
 
         me = await self.client.get("/auth/me")
         self.assertEqual(me.status_code, 200)
-        self.assertEqual(me.json()["phone_e164"], "+84901234567")
+        self.assertEqual(me.json()["phone_e164"], self.phone_e164)
         self.assertEqual(me.json()["id"], registered_body["user"]["id"])
 
         old_refresh = self.client.cookies.get(AUTH_REFRESH_COOKIE_NAME)
@@ -136,7 +141,7 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
 
         logged_in = await self.client.post(
             "/auth/login",
-            json={"phone": "0901234567", "password": PASSWORD},
+            json={"phone": self.phone, "password": PASSWORD},
         )
         self.assertEqual(logged_in.status_code, 200)
         self.assertFalse(logged_in.json()["is_new_user"])
@@ -149,7 +154,7 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
         mismatch = await self.client.post(
             "/auth/register",
             json={
-                "phone": "0901234567",
+                "phone": self.phone,
                 "password": PASSWORD,
                 "password_confirmation": "different-password",
                 "unexpected": "secret",
@@ -189,7 +194,7 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
         bad_login = await self.client.post(
             "/auth/login",
             json={
-                "phone": "0901234567",
+                "phone": self.phone,
                 "password": "incorrect-password",
             },
         )
@@ -207,7 +212,7 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
             response = await self.client.post(
                 "/auth/login",
                 json={
-                    "phone": "0901234567",
+                    "phone": self.phone,
                     "password": "incorrect-password",
                 },
             )
@@ -215,7 +220,7 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
 
         limited = await self.client.post(
             "/auth/login",
-            json={"phone": "0901234567", "password": PASSWORD},
+            json={"phone": self.phone, "password": PASSWORD},
             headers={"Origin": FRONTEND_ORIGINS[0]},
         )
         self.assertEqual(limited.status_code, 429)
@@ -241,7 +246,7 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
             (
                 await self.client.post(
                     "/auth/otp/request",
-                    json={"phone": "0901234567"},
+                    json={"phone": self.phone},
                 )
             ).status_code,
             404,
@@ -282,7 +287,7 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
         return await self.client.post(
             "/auth/register",
             json={
-                "phone": "090 123 4567",
+                "phone": self.phone,
                 "password": PASSWORD,
                 "password_confirmation": PASSWORD,
             },

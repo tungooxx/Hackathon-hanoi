@@ -27,6 +27,13 @@ tìm kiếm sản phẩm. Schema hiện tại gồm:
 - `users.password_hash`: Argon2 hash; mật khẩu gốc không được lưu.
 - `auth_login_attempts`: chỉ lưu HMAC digest phục vụ giới hạn đăng nhập sai.
 - `auth_sessions`: chỉ lưu digest của refresh token, có thể revoke theo session.
+- `chat_sessions`: metadata hội thoại thuộc một `users.id`, ánh xạ sang thread
+  LangGraph nội bộ do server tạo.
+
+LangGraph stores graph state in its own PostgreSQL checkpoint tables through
+`AsyncPostgresSaver`. Its schema is initialized by the checkpointer at app
+startup and excluded from Alembic autogeneration; Alembic continues to own all
+application tables.
 
 Sau khi đổi model trong `db/models.py`, tạo và kiểm tra migration:
 
@@ -91,9 +98,22 @@ Expected authentication errors use:
 }
 ```
 
-## API cho FE
+## User-owned chat API
 
-`POST /chat` body `{"session_id": "...", "message": "..."}` → SSE stream, các event:
+All chat endpoints require a valid access-cookie session. The server derives
+ownership exclusively from the JWT `sub`; a request body never accepts
+`user_id` or an internal LangGraph thread ID.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /chat/sessions` | Create a server-owned conversation |
+| `GET /chat/sessions` | List only the current user's conversations |
+| `GET /chat/sessions/{id}` | Read owned conversation metadata |
+| `PATCH /chat/sessions/{id}` | Rename an owned conversation |
+| `DELETE /chat/sessions/{id}` | Delete metadata and its checkpoints |
+| `POST /chat/sessions/{id}/messages` | Stream one assistant turn over SSE |
+
+The message body is `{"message": "..."}`. The response stream contains:
 
 | event | data | dùng làm |
 |---|---|---|
@@ -103,7 +123,13 @@ Expected authentication errors use:
 | `product_cards` | `{products: [...]}` | render 3 card sản phẩm |
 | `done` | `{turn_type: ask\|compare\|no_match\|off_topic}` | kết thúc turn |
 
-State hội thoại persist theo `session_id` (LangGraph checkpointer) — FE chỉ cần giữ 1 session_id.
+The API returns only the public `chat_sessions.id`. Every lookup also requires
+`chat_sessions.user_id == current_user.id`; another user's UUID returns the
+same `404` as an unknown UUID. The private `langgraph_thread_id` is generated
+server-side and persists conversation state across restarts.
+
+The old unauthenticated `POST /chat` endpoint and browser-generated
+`session_id` contract have been removed.
 
 ## Hợp đồng với BE2 (Kiên)
 

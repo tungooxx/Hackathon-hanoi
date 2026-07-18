@@ -2,6 +2,8 @@ fastapi
 uvicorn[standard]
 sse-starlette
 langgraph
+langgraph-checkpoint-postgres
+psycopg[binary,pool]
 langchain-openai
 pydantic
 httpx

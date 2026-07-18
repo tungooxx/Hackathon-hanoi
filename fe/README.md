@@ -35,6 +35,17 @@ For a production build that calls a separate backend origin, set
 - JWTs stay in backend-issued HttpOnly cookies and are never stored by React.
 - The header shows the masked phone and logout menu for authenticated users.
 
+## User-owned chat sessions
+
+- Opening chat while signed out redirects to `/login`.
+- The browser creates a conversation with `POST /chat/sessions` before sending
+  its first message.
+- Messages stream from `POST /chat/sessions/{id}/messages`.
+- React receives only the server-generated public session UUID. BE1 keeps the
+  LangGraph thread ID private and checks the session owner on every request.
+- `src/lib/chatApi.js` also exposes list, read, rename, and delete helpers for a
+  future conversation-history screen.
+
 ## Validation
 
 ```bash

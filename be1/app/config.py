@@ -36,6 +36,15 @@ DATABASE_POOL_SIZE = int(os.getenv("DATABASE_POOL_SIZE", "5"))
 DATABASE_MAX_OVERFLOW = int(os.getenv("DATABASE_MAX_OVERFLOW", "10"))
 DATABASE_POOL_RECYCLE_SECONDS = int(os.getenv("DATABASE_POOL_RECYCLE_SECONDS", "1800"))
 
+# LangGraph uses Psycopg 3 rather than SQLAlchemy's asyncpg driver. Both URLs
+# point at the same PostgreSQL database unless explicitly separated.
+LANGGRAPH_DATABASE_URL = os.getenv(
+    "LANGGRAPH_DATABASE_URL",
+    DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://", 1),
+)
+LANGGRAPH_POOL_MIN_SIZE = int(os.getenv("LANGGRAPH_POOL_MIN_SIZE", "1"))
+LANGGRAPH_POOL_MAX_SIZE = int(os.getenv("LANGGRAPH_POOL_MAX_SIZE", "5"))
+
 # Phone/password + JWT authentication. Development defaults keep local setup
 # simple; validate_auth_config() rejects unsafe secrets in production.
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
@@ -139,6 +148,8 @@ def validate_auth_config() -> None:
         "LOGIN_IP_RATE_LIMIT_COUNT": LOGIN_IP_RATE_LIMIT_COUNT,
         "JWT_ACCESS_TTL_SECONDS": JWT_ACCESS_TTL_SECONDS,
         "JWT_REFRESH_TTL_SECONDS": JWT_REFRESH_TTL_SECONDS,
+        "LANGGRAPH_POOL_MIN_SIZE": LANGGRAPH_POOL_MIN_SIZE,
+        "LANGGRAPH_POOL_MAX_SIZE": LANGGRAPH_POOL_MAX_SIZE,
     }
     invalid = [name for name, value in positive_values.items() if value <= 0]
     if invalid:
@@ -193,6 +204,11 @@ def validate_auth_config() -> None:
     if JWT_REFRESH_TTL_SECONDS <= JWT_ACCESS_TTL_SECONDS:
         raise RuntimeError(
             "JWT_REFRESH_TTL_SECONDS must be longer than JWT_ACCESS_TTL_SECONDS"
+        )
+    if LANGGRAPH_POOL_MAX_SIZE < LANGGRAPH_POOL_MIN_SIZE:
+        raise RuntimeError(
+            "LANGGRAPH_POOL_MAX_SIZE must be greater than or equal to "
+            "LANGGRAPH_POOL_MIN_SIZE"
         )
 
     if APP_ENV in {"prod", "production"}:

@@ -91,6 +91,11 @@ class User(TimestampMixin, Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    chat_sessions: Mapped[list[ChatSession]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class AuthLoginAttempt(Base):
@@ -165,3 +170,41 @@ class AuthSession(TimestampMixin, Base):
     )
 
     user: Mapped[User] = relationship(back_populates="auth_sessions")
+
+
+class ChatSession(TimestampMixin, Base):
+    """A user-owned public conversation mapped to one private graph thread."""
+
+    __tablename__ = "chat_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(btrim(title)) BETWEEN 1 AND 120",
+            name="title_length",
+        ),
+        Index("ix_chat_sessions_user_updated", "user_id", "updated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+        default="Cuộc trò chuyện mới",
+        server_default=text("'Cuộc trò chuyện mới'"),
+    )
+    langgraph_thread_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=False,
+        unique=True,
+        default=uuid.uuid4,
+    )
+
+    user: Mapped[User] = relationship(back_populates="chat_sessions")
