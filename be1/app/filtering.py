@@ -8,6 +8,8 @@ def apply_hard_filters(products: list[dict], slots: dict[str, Any]) -> list[dict
     out = products
     if (budget := slots.get("budget_max")) is not None:
         out = [p for p in out if p.get("price_sale") and p["price_sale"] <= budget]
+    if (budget := slots.get("budget_min")) is not None:
+        out = [p for p in out if p.get("price_sale") and p["price_sale"] >= budget]
     if (area := cooling_area_required(slots)) is not None:
         # giữ sản phẩm null diện tích? Không — hard filter cần chắc chắn khớp
         out = [

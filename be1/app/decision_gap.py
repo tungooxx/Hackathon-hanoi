@@ -108,6 +108,9 @@ def choose_next_question(
         slot = definition.name
         if slot in slots or slot in asked_slots:
             continue
+        if (definition.maps_to_field in {"price_sale", "price_original"}
+                and any(key in slots for key in ("budget_min", "budget_max", "budget_target"))):
+            continue
         answers = _likely_answers(slot, products, definition.maps_to_field)
         if not answers:
             continue
