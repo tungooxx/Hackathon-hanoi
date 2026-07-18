@@ -180,7 +180,14 @@ async def stream_chat_message(
             async for event_payload in runtime.stream(
                 thread_id=thread_id,
                 message=payload.message,
+                session_content=chat_session.session_content,
             ):
+                if event_payload["type"] == "_session_content_update":
+                    await service.update_session_content(
+                        chat_session_id,
+                        user.id,
+                        session_content=event_payload["content"],
+                    )
                 events.append(event_payload)
                 if not event_payload["type"].startswith("_"):
                     yield _sse_event(event_payload)
@@ -200,6 +207,7 @@ def _response(chat_session: ChatSession) -> ChatSessionResponse:
     return ChatSessionResponse(
         id=chat_session.id,
         title=chat_session.title,
+        session_content=chat_session.session_content,
         created_at=chat_session.created_at,
         updated_at=chat_session.updated_at,
     )

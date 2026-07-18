@@ -89,11 +89,15 @@ class ChatGraphRuntime:
         *,
         thread_id: str,
         message: str,
+        session_content: str,
     ) -> AsyncIterator[dict[str, Any]]:
         graph = self._require_graph()
         config = {"configurable": {"thread_id": thread_id}}
         async for payload in graph.astream(
-            {"user_input": message},
+            {
+                "user_input": message,
+                "session_content": session_content,
+            },
             config,
             stream_mode="custom",
         ):

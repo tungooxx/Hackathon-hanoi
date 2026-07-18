@@ -156,3 +156,12 @@ class SlotDef(BaseModel):
 class NextQuestion(BaseModel):
     slot: str
     reason: str                 # cho explainability panel
+
+
+class SessionContentResult(BaseModel):
+    """Structured output from the session-history compression agent."""
+
+    session_content: str = Field(
+        min_length=1,
+        description="Cumulative conversation context formatted as Markdown",
+    )

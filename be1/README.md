@@ -130,6 +130,14 @@ The API returns only the public `chat_sessions.id`. Every lookup also requires
 same `404` as an unknown UUID. The private `langgraph_thread_id` is generated
 server-side and persists conversation state across restarts.
 
+Authenticated sessions also expose `session_content`, a cumulative Markdown
+summary managed by the history-control graph node. The graph keeps completed
+messages in a recent raw window. When intent detection confirms a product-topic
+change, the node summarizes the previous `session_content` plus that raw window,
+persists the new Markdown, clears the compressed raw messages, and starts a new
+window with the topic-changing user message. Future LLM calls receive only the
+Markdown summary followed by the new raw window.
+
 The old unauthenticated `POST /chat` endpoint and browser-generated
 `session_id` contract have been removed.
 

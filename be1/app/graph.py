@@ -16,6 +16,11 @@ from .config import COMPARE_THRESHOLD, LLM_API_KEY, MOCK_LLM, RAG_MIN_SCORE, RAG
 from .decision_gap import choose_next_question
 from .filtering import apply_hard_filters
 from .scoring import rank_top3
+from .session_history import (
+    HistoryMessage,
+    append_message,
+    render_session_context,
+)
 
 
 class AgentState(TypedDict, total=False):
@@ -45,8 +50,11 @@ class AgentState(TypedDict, total=False):
     fulfillment_context: dict[str, str]
     awaiting_fulfillment: bool
     fulfillment_candidates: list[str]
-    conversation_history: list[dict[str, str]]
     catalog_preferences: list[dict[str, str]]
+    # Session-history agent: cumulative compressed Markdown + uncompressed tail.
+    session_content: str
+    recent_messages: list[HistoryMessage]
+    topic_changed: bool
 
 
 def _customer_visible_slots(slots: dict[str, Any], schema: list[Any] | None = None) -> dict[str, Any]:
@@ -73,7 +81,6 @@ async def intent_node(state: AgentState) -> dict:
     fulfillment_context = dict(state.get("fulfillment_context", {}))
     awaiting_fulfillment = state.get("awaiting_fulfillment", False)
     fulfillment_candidates: list[str] = []
-    history = list(state.get("conversation_history", []))
     catalog_preferences = list(state.get("catalog_preferences", []))
     category = state.get("category")
     expected_question = None
@@ -92,11 +99,17 @@ async def intent_node(state: AgentState) -> dict:
                 "field": definition.maps_to_field,
                 "operation": definition.operation,
             }
+    try:
+        known_categories = await product_repo.list_categories()
+    except Exception:
+        known_categories = []
     result = await llm.extract_intent(
         state["user_input"], state.get("category"), state.get("slots", {}),
-        expected_question=expected_question, conversation_history=history,
+        expected_question=expected_question,
+        session_content=state.get("session_content", ""),
+        recent_messages=state.get("recent_messages", []),
+        known_categories=known_categories,
     )
-    history = [*history, {"role": "user", "content": state["user_input"]}][-8:]
     if awaiting_fulfillment:
         required_key = fulfillment.fulfillment_provider.required_context(fulfillment_context)
         if required_key:
@@ -228,7 +241,13 @@ async def intent_node(state: AgentState) -> dict:
                 if preference not in catalog_preferences:
                     catalog_preferences.append(preference)
 
-    if result.intent_type == "new_topic" and result.category and result.category != category:
+    topic_changed = bool(
+        category
+        and result.intent_type == "new_topic"
+        and result.category
+        and result.category != category
+    )
+    if topic_changed:
         # đổi category giữa chừng: reset slots trừ budget, reset đếm câu hỏi
         slots = {k: v for k, v in slots.items() if k == "budget_max"}
         asked, ask_count = [], 0
@@ -262,8 +281,66 @@ async def intent_node(state: AgentState) -> dict:
         "fulfillment_context": fulfillment_context,
         "awaiting_fulfillment": awaiting_fulfillment,
         "fulfillment_candidates": fulfillment_candidates,
-        "conversation_history": history,
         "catalog_preferences": catalog_preferences,
+        "topic_changed": topic_changed,
+    }
+
+
+async def history_control_node(state: AgentState) -> dict:
+    """Compress completed older turns when intent detects a topic change."""
+
+    w = get_stream_writer()
+    session_content = state.get("session_content", "")
+    recent_messages = list(state.get("recent_messages", []))
+
+    if state.get("topic_changed") and recent_messages:
+        t0 = time.perf_counter()
+        session_content = await llm.summarize_session_history(
+            session_content,
+            recent_messages,
+        )
+        recent_messages = []
+        w({
+            "type": "_stage",
+            "stage": "history_compress",
+            "ms": round((time.perf_counter() - t0) * 1000),
+        })
+        # The authenticated router persists this owner-scoped Markdown in the
+        # chat_sessions row. It remains internal and is never forwarded by SSE.
+        w({
+            "type": "_session_content_update",
+            "content": session_content,
+        })
+
+    recent_messages = append_message(
+        recent_messages,
+        role="user",
+        content=state["user_input"],
+    )
+    return {
+        "session_content": session_content,
+        "recent_messages": recent_messages,
+    }
+
+
+def _phrase_context(state: AgentState, context: dict[str, Any]) -> dict[str, Any]:
+    history_context = render_session_context(
+        state.get("session_content", ""),
+        state.get("recent_messages", []),
+    )
+    return {
+        **context,
+        "history_context": history_context,
+    }
+
+
+def _assistant_history(state: AgentState, content: str) -> dict:
+    return {
+        "recent_messages": append_message(
+            state.get("recent_messages", []),
+            role="assistant",
+            content=content,
+        )
     }
 
 
@@ -341,7 +418,10 @@ def route_after_retrieve(state: AgentState) -> str:
     if not state["candidates"]:
         return "compare"  # compare_node xử lý case rỗng (no_match)
     if state.get("explicit_product") or state.get("selected_index") or state.get("wants_product_details"):
-        if fulfillment.fulfillment_provider.required_context(state.get("fulfillment_context", {})):
+        # Chỉ hỏi tỉnh/thành khi khách THẬT SỰ chốt một mẫu cụ thể; câu hỏi thông số
+        # ("tốn điện không", "tản nhiệt sao") phải được trả lời thẳng, không bị chặn.
+        if (state.get("explicit_product") or state.get("selected_index")) and \
+                fulfillment.fulfillment_provider.required_context(state.get("fulfillment_context", {})):
             return "fulfillment_prompt"
         return "detail"
     if state.get("price_order"):
@@ -368,7 +448,8 @@ async def ask_node(state: AgentState) -> dict:
     schema = {s.name: s for s in state.get("question_schema", [])}
     w({"type": "question", "slot": nq.slot, "reason": nq.reason})
     t0 = time.perf_counter()
-    async for chunk in llm.stream_phrase("ask", {
+    chunks: list[str] = []
+    async for chunk in llm.stream_phrase("ask", _phrase_context(state, {
         "category": state["category"],
         "question_slot": nq.slot,
         "ask_hint": schema[nq.slot].ask_hint,
@@ -377,42 +458,43 @@ async def ask_node(state: AgentState) -> dict:
         "catalog_field": schema[nq.slot].maps_to_field,
         "candidate_count": len(state["candidates"]),
         "slots": state["slots"],
-    }):
+    })):
+        chunks.append(chunk)
         w({"type": "text_chunk", "content": chunk})
     w({"type": "_stage", "stage": "ask_phrase", "ms": round((time.perf_counter() - t0) * 1000)})
     w({"type": "done", "turn_type": "ask"})
-    history = [*state.get("conversation_history", []), {
-        "role": "assistant", "content": f"Asked {nq.slot}: {schema[nq.slot].ask_hint}",
-    }][-8:]
     return {
         "ask_count": state["ask_count"] + 1,
         "asked_slots": state["asked_slots"] + [nq.slot],
-        "conversation_history": history,
+        **_assistant_history(state, "".join(chunks)),
     }
 
 
 async def compare_node(state: AgentState) -> dict:
     w = get_stream_writer()
     if not state["candidates"]:
-        async for chunk in llm.stream_phrase("no_match", {"slots": state["slots"], "category": state["category"]}):
+        chunks: list[str] = []
+        async for chunk in llm.stream_phrase(
+            "no_match",
+            _phrase_context(state, {"slots": state["slots"], "category": state["category"]}),
+        ):
+            chunks.append(chunk)
             w({"type": "text_chunk", "content": chunk})
         w({"type": "done", "turn_type": "no_match"})
-        return {}
+        return _assistant_history(state, "".join(chunks))
     top3 = rank_top3(state["candidates"], state["priorities"], state.get("catalog_preferences"))
     w({"type": "product_cards", "products": top3})
     w({"type": "_context", "products": top3, "slots": state["slots"]})
     t0 = time.perf_counter()
-    async for chunk in llm.stream_phrase("compare", {
+    chunks = []
+    async for chunk in llm.stream_phrase("compare", _phrase_context(state, {
         "products": top3, "priorities": state["priorities"] or ["gia_re"],
-    }):
+    })):
+        chunks.append(chunk)
         w({"type": "text_chunk", "content": chunk})
     w({"type": "_stage", "stage": "compare_phrase", "ms": round((time.perf_counter() - t0) * 1000)})
     w({"type": "done", "turn_type": "compare"})
-    history = [*state.get("conversation_history", []), {
-        "role": "assistant",
-        "content": "Presented shortlist: " + "; ".join(product["name"] for product in top3),
-    }][-8:]
-    return {"conversation_history": history}
+    return _assistant_history(state, "".join(chunks))
 
 
 async def detail_node(state: AgentState) -> dict:
@@ -426,17 +508,16 @@ async def detail_node(state: AgentState) -> dict:
     w({"type": "product_cards", "products": [product]})
     w({"type": "_context", "product": product, "slots": state["slots"]})
     t0 = time.perf_counter()
-    async for chunk in llm.stream_phrase("detail", {
+    chunks: list[str] = []
+    async for chunk in llm.stream_phrase("detail", _phrase_context(state, {
         "product": product,
         "question": state["user_input"],
-    }):
+    })):
+        chunks.append(chunk)
         w({"type": "text_chunk", "content": chunk})
     w({"type": "_stage", "stage": "detail_phrase", "ms": round((time.perf_counter() - t0) * 1000)})
     w({"type": "done", "turn_type": "detail"})
-    history = [*state.get("conversation_history", []), {
-        "role": "assistant", "content": f"Presented product details: {product['name']}",
-    }][-8:]
-    return {"conversation_history": history}
+    return _assistant_history(state, "".join(chunks))
 
 
 async def price_answer_node(state: AgentState) -> dict:
@@ -444,23 +525,30 @@ async def price_answer_node(state: AgentState) -> dict:
     w = get_stream_writer()
     priced = [product for product in state["candidates"] if product.get("price_sale") is not None]
     if not priced:
-        async for chunk in llm.stream_phrase("no_match", {"slots": state["slots"], "category": state["category"]}):
+        chunks: list[str] = []
+        async for chunk in llm.stream_phrase(
+            "no_match",
+            _phrase_context(state, {"slots": state["slots"], "category": state["category"]}),
+        ):
+            chunks.append(chunk)
             w({"type": "text_chunk", "content": chunk})
         w({"type": "done", "turn_type": "price_answer"})
-        return {}
+        return _assistant_history(state, "".join(chunks))
     product = (
         max(priced, key=lambda item: item["price_sale"])
         if state["price_order"] == "highest"
         else min(priced, key=lambda item: item["price_sale"])
     )
     w({"type": "product_cards", "products": [product]})
-    async for chunk in llm.stream_phrase("price_answer", {
+    chunks = []
+    async for chunk in llm.stream_phrase("price_answer", _phrase_context(state, {
         "product": product,
         "price_order": state["price_order"],
-    }):
+    })):
+        chunks.append(chunk)
         w({"type": "text_chunk", "content": chunk})
     w({"type": "done", "turn_type": "price_answer"})
-    return {}
+    return _assistant_history(state, "".join(chunks))
 
 
 async def policy_node(state: AgentState) -> dict:
@@ -472,21 +560,34 @@ async def policy_node(state: AgentState) -> dict:
 
     if not hits or hits[0].score < RAG_MIN_SCORE:
         w({"type": "_policy_miss", "top_score": hits[0].score if hits else 0.0})
-        async for chunk in llm.stream_phrase("policy_no_info", {}):
+        chunks: list[str] = []
+        async for chunk in llm.stream_phrase(
+            "policy_no_info",
+            _phrase_context(state, {}),
+        ):
+            chunks.append(chunk)
             w({"type": "text_chunk", "content": chunk})
         w({"type": "done", "turn_type": "policy"})
-        return {}
+        return _assistant_history(state, "".join(chunks))
 
     hit_dicts = [{"title": h.title, "source": h.source, "text": h.text, "score": h.score} for h in hits]
     w({"type": "policy_sources",
        "sources": [{"title": h.title, "source": h.source, "score": h.score} for h in hits]})
     w({"type": "_context", "policy_hits": hit_dicts, "query": state["user_input"]})
     t1 = time.perf_counter()
-    async for chunk in llm.stream_phrase("policy", {"question": state["user_input"], "hits": hit_dicts}):
+    chunks = []
+    async for chunk in llm.stream_phrase(
+        "policy",
+        _phrase_context(
+            state,
+            {"question": state["user_input"], "hits": hit_dicts},
+        ),
+    ):
+        chunks.append(chunk)
         w({"type": "text_chunk", "content": chunk})
     w({"type": "_stage", "stage": "policy_phrase", "ms": round((time.perf_counter() - t1) * 1000)})
     w({"type": "done", "turn_type": "policy"})
-    return {}
+    return _assistant_history(state, "".join(chunks))
 
 
 async def greeting_node(state: AgentState) -> dict:
@@ -501,10 +602,15 @@ async def greeting_node(state: AgentState) -> dict:
 
 async def off_topic_node(state: AgentState) -> dict:
     w = get_stream_writer()
-    async for chunk in llm.stream_phrase("off_topic", {}):
+    chunks: list[str] = []
+    async for chunk in llm.stream_phrase(
+        "off_topic",
+        _phrase_context(state, {}),
+    ):
+        chunks.append(chunk)
         w({"type": "text_chunk", "content": chunk})
     w({"type": "done", "turn_type": "off_topic"})
-    return {}
+    return _assistant_history(state, "".join(chunks))
 
 
 # ---------------- nhánh "sản phẩm lạ": lookup -> enrich (web + hỏi) -> resolve ----------------
@@ -734,6 +840,7 @@ async def fulfillment_clarify_node(state: AgentState) -> dict:
 def build_graph(*, checkpointer):
     g = StateGraph(AgentState)
     g.add_node("intent", intent_node)
+    g.add_node("history_control", history_control_node)
     g.add_node("retrieve", retrieve_node)
     g.add_node("ask", ask_node)
     g.add_node("compare", compare_node)
@@ -751,7 +858,8 @@ def build_graph(*, checkpointer):
     g.add_node("fulfillment_check", fulfillment_check_node)
     g.add_node("fulfillment_clarify", fulfillment_clarify_node)
     g.add_edge(START, "intent")
-    g.add_conditional_edges("intent", route_after_intent,
+    g.add_edge("intent", "history_control")
+    g.add_conditional_edges("history_control", route_after_intent,
                             {"retrieve": "retrieve", "policy": "policy", "off_topic": "off_topic",
                              "greeting": "greeting", "product_lookup": "product_lookup", "resolve": "resolve",
                              "catalog_unavailable": "catalog_unavailable", "clarify_category": "clarify_category",

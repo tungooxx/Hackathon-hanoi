@@ -114,6 +114,27 @@ class ChatSessionService:
             await self.session.flush()
             return chat_session
 
+    async def update_session_content(
+        self,
+        chat_session_id: uuid.UUID,
+        user_id: uuid.UUID,
+        *,
+        session_content: str,
+    ) -> ChatSession:
+        """Persist Markdown emitted by the history-control graph node."""
+
+        async with self.session.begin():
+            chat_session = self._require(
+                await self.chat_sessions.get_owned(
+                    chat_session_id,
+                    user_id,
+                    for_update=True,
+                )
+            )
+            chat_session.session_content = session_content
+            await self.session.flush()
+            return chat_session
+
     async def delete_owned(
         self,
         chat_session_id: uuid.UUID,

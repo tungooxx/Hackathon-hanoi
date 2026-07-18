@@ -39,6 +39,7 @@ class ChatMessageRequest(BaseModel):
 class ChatSessionResponse(BaseModel):
     id: uuid.UUID
     title: str
+    session_content: str
     created_at: datetime
     updated_at: datetime
 

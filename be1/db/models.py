@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     MetaData,
     String,
+    Text,
     Uuid,
     func,
     text,
@@ -205,6 +206,12 @@ class ChatSession(TimestampMixin, Base):
         nullable=False,
         unique=True,
         default=uuid.uuid4,
+    )
+    session_content: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default=text("''"),
     )
 
     user: Mapped[User] = relationship(back_populates="chat_sessions")
