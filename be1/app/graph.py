@@ -5,6 +5,7 @@ a checkpointer and are intentionally stateless.
 Mọi output đẩy ra FE qua stream_mode="custom"; event type bắt đầu bằng "_"
 là internal (log-only), main.py sẽ không forward cho client.
 """
+import re
 import time
 from typing import Any, TypedDict
 
@@ -38,6 +39,7 @@ class AgentState(TypedDict, total=False):
     selected_index: int | None
     selected_sku: str | None
     wants_product_details: bool
+    wants_checkout: bool
     price_order: str | None
     product_mentions: list[str]
     unknown_products: list[str]
@@ -51,8 +53,11 @@ class AgentState(TypedDict, total=False):
     fulfillment_context: dict[str, str]
     awaiting_fulfillment: bool
     fulfillment_for_shortlist: bool
+    fulfillment_for_checkout: bool
     fulfillment_resume_comparison: bool
     fulfillment_candidates: list[str]
+    awaiting_checkout: bool
+    checkout_contact_ready: bool
     catalog_preferences: list[dict[str, str]]
     # Session-history agent: cumulative compressed Markdown + uncompressed tail.
     session_content: str
@@ -97,9 +102,14 @@ async def intent_node(state: AgentState) -> dict:
     ask_count = state.get("ask_count", 0)
     fulfillment_context = dict(state.get("fulfillment_context", {}))
     awaiting_fulfillment = state.get("awaiting_fulfillment", False)
+    awaiting_checkout = state.get("awaiting_checkout", False)
     fulfillment_candidates: list[str] = []
     catalog_preferences = list(state.get("catalog_preferences", []))
     category = state.get("category")
+    if awaiting_checkout:
+        compact_phone = re.sub(r"[\s().-]", "", state["user_input"])
+        if re.fullmatch(r"(?:\+84|0)\d{9,10}", compact_phone):
+            return {"intent_type": "same_topic", "checkout_contact_ready": True}
     expected_question = None
     expected_definition = None
     if category and asked:
@@ -199,6 +209,23 @@ async def intent_node(state: AgentState) -> dict:
     else:
         result.category = None
 
+    # A commitment to buy is a conversation control signal.  It must not be
+    # consumed as the value of whichever Decision-Gap question happened to be
+    # active; the subsequent catalog lookup decides whether the named product
+    # is unambiguous before checkout begins.
+    if result.wants_checkout or llm.looks_like_checkout(state["user_input"]):
+        answers = dict(result.ontology_answers)
+        if expected_question:
+            answers.pop(expected_question.get("slot", ""), None)
+            if asked and asked[-1] == expected_question.get("slot"):
+                asked.pop()
+        result = result.model_copy(update={
+            "wants_checkout": True,
+            "active_question_override": True,
+            "ontology_answers": answers,
+            "intent_type": "same_topic",
+        })
+
     # Structured output has a fixed schema whereas ontology concept IDs are
     # dynamic.  If the model fails to emit the requested dynamic dictionary
     # key, the active-question state is still authoritative: a short reply
@@ -287,16 +314,13 @@ async def intent_node(state: AgentState) -> dict:
                 if preference not in catalog_preferences:
                     catalog_preferences.append(preference)
 
-    topic_changed = bool(
-        category
-        and result.intent_type == "new_topic"
-        and result.category
-        and result.category != category
-    )
+    topic_changed = bool(category and resolved_category and resolved_category != category)
     if topic_changed:
         # đổi category giữa chừng: reset slots trừ budget, reset đếm câu hỏi
-        slots = {k: v for k, v in slots.items() if k in {"budget_min", "budget_max", "budget_target"}}
+        slots = {}
         asked, ask_count = [], 0
+        awaiting_fulfillment = False
+        awaiting_checkout = False
     if result.category:
         category = result.category
 
@@ -337,12 +361,14 @@ async def intent_node(state: AgentState) -> dict:
             else state.get("selected_index") if awaiting_fulfillment else None
         ),
         "wants_product_details": result.wants_product_details,
+        "wants_checkout": result.wants_checkout,
         "price_order": result.price_order,
         "product_mentions": result.product_mentions,
         "catalog_lookup_failed": catalog_lookup_failed,
         "category_candidates": category_candidates,
         "fulfillment_context": fulfillment_context,
         "awaiting_fulfillment": awaiting_fulfillment,
+        "awaiting_checkout": awaiting_checkout,
         "fulfillment_candidates": fulfillment_candidates,
         "catalog_preferences": catalog_preferences,
         "topic_changed": topic_changed,
@@ -424,7 +450,11 @@ async def retrieve_node(state: AgentState) -> dict:
        "filters": _customer_visible_slots(state["slots"], question_schema), "category": state["category"]})
     return {
         "candidates": candidates, "catalog_products": products, "total_in_category": len(products),
-        "explicit_product": explicit_product, "question_schema": question_schema,
+        # Checkpoints must contain plain JSON-compatible data.  _slot_defs()
+        # reconstructs these dictionaries on the next turn, avoiding an
+        # unsafe/blocked Pydantic msgpack deserialization on resumed chats.
+        "explicit_product": explicit_product,
+        "question_schema": [definition.model_dump() for definition in question_schema],
         "catalog_lookup_failed": False,
     }
 
@@ -439,6 +469,8 @@ def route_after_intent(state: AgentState) -> str:
     # Khách đang trả lời câu hỏi nhu cầu của luồng "sản phẩm lạ" -> tiếp tục resolve.
     if state.get("enrich_pending"):
         return "resolve"
+    if state.get("awaiting_checkout"):
+        return "checkout_complete" if state.get("checkout_contact_ready") else "checkout_prompt"
     if state.get("awaiting_fulfillment"):
         if state.get("fulfillment_candidates"):
             return "fulfillment_clarify"
@@ -489,6 +521,10 @@ def route_after_retrieve(state: AgentState) -> str:
     if not state["candidates"]:
         return "compare"  # compare_node xử lý case rỗng (no_match)
     if state.get("explicit_product") or state.get("selected_index") or state.get("wants_product_details"):
+        if state.get("wants_checkout"):
+            if fulfillment.fulfillment_provider.required_context(state.get("fulfillment_context", {})):
+                return "fulfillment_prompt"
+            return "checkout_prompt"
         # Chỉ hỏi tỉnh/thành khi khách THẬT SỰ chốt một mẫu cụ thể; câu hỏi thông số
         # ("tốn điện không", "tản nhiệt sao") phải được trả lời thẳng, không bị chặn.
         if (state.get("explicit_product") or state.get("selected_index")) and \
@@ -919,6 +955,7 @@ async def fulfillment_prompt_node(state: AgentState) -> dict:
     return {
         "awaiting_fulfillment": True,
         "fulfillment_for_shortlist": shortlist_request,
+        "fulfillment_for_checkout": bool(state.get("wants_checkout") and not shortlist_request),
         "selected_sku": product.get("sku") if product else None,
     }
 
@@ -952,13 +989,74 @@ async def fulfillment_check_node(state: AgentState) -> dict:
         "awaiting_fulfillment": False,
         "fulfillment_for_shortlist": False,
         "fulfillment_resume_comparison": False,
-        "selected_sku": None,
+        "fulfillment_for_checkout": state.get("fulfillment_for_checkout", False),
+        "selected_sku": product.get("sku") if product else selected_sku,
     }
 
 
 def route_after_fulfillment_check(state: AgentState) -> str:
     """Only a shortlist availability check continues into a recommendation."""
+    if state.get("fulfillment_for_checkout"):
+        return "checkout_prompt"
     return "compare" if state.get("fulfillment_resume_comparison") else "end"
+
+
+def _checkout_product(state: AgentState) -> dict | None:
+    selected_sku = state.get("selected_sku")
+    if selected_sku:
+        product = next((item for item in state.get("catalog_products", [])
+                        if item.get("sku") == selected_sku), None)
+        if product:
+            return product
+    if state.get("explicit_product"):
+        return state["explicit_product"]
+    candidates = state.get("candidates", [])
+    if not candidates:
+        return None
+    shortlist = rank_top3(candidates, state.get("priorities", []), state.get("catalog_preferences"))
+    index = min(max(0, (state.get("selected_index") or 1) - 1), len(shortlist) - 1)
+    return shortlist[index]
+
+
+async def checkout_prompt_node(state: AgentState) -> dict:
+    """Collect only the minimum contact signal for the prototype checkout."""
+    w = get_stream_writer()
+    product = _checkout_product(state)
+    if not product:
+        return {}
+    message = (
+        f"Dạ em đã ghi nhận mẫu {product['name']}. "
+        "Anh/chị cho em xin số điện thoại để xác nhận yêu cầu đặt hàng nhé ạ."
+    )
+    w({"type": "text_chunk", "content": message})
+    w({"type": "done", "turn_type": "checkout_prompt"})
+    return {
+        "awaiting_checkout": True,
+        "checkout_contact_ready": False,
+        "fulfillment_for_checkout": False,
+        "selected_sku": product.get("sku"),
+        **_assistant_history(state, message),
+    }
+
+
+async def checkout_complete_node(state: AgentState) -> dict:
+    """Confirm the prototype request without retaining the phone number."""
+    w = get_stream_writer()
+    product = _checkout_product(state)
+    name = product.get("name") if product else "mẫu anh/chị đã chọn"
+    message = (
+        f"Dạ em đã ghi nhận yêu cầu đặt {name} và số điện thoại liên hệ của anh/chị. "
+        "Bên em sẽ dùng thông tin này để xác nhận đơn sớm ạ."
+    )
+    w({"type": "text_chunk", "content": message})
+    w({"type": "done", "turn_type": "checkout_complete"})
+    return {
+        "awaiting_checkout": False,
+        "checkout_contact_ready": False,
+        "wants_checkout": False,
+        "selected_sku": None,
+        **_assistant_history(state, message),
+    }
 
 
 async def fulfillment_clarify_node(state: AgentState) -> dict:
@@ -990,6 +1088,8 @@ def build_graph(*, checkpointer):
     g.add_node("fulfillment_prompt", fulfillment_prompt_node)
     g.add_node("fulfillment_check", fulfillment_check_node)
     g.add_node("fulfillment_clarify", fulfillment_clarify_node)
+    g.add_node("checkout_prompt", checkout_prompt_node)
+    g.add_node("checkout_complete", checkout_complete_node)
     g.add_edge(START, "intent")
     g.add_edge("intent", "history_control")
     g.add_conditional_edges("history_control", route_after_intent,
@@ -997,10 +1097,12 @@ def build_graph(*, checkpointer):
                              "greeting": "greeting", "product_lookup": "product_lookup", "resolve": "resolve",
                              "catalog_unavailable": "catalog_unavailable", "clarify_category": "clarify_category",
                              "fulfillment_prompt": "fulfillment_prompt", "fulfillment_check": "fulfillment_check",
-                             "fulfillment_clarify": "fulfillment_clarify"})
+                             "fulfillment_clarify": "fulfillment_clarify", "checkout_prompt": "checkout_prompt",
+                             "checkout_complete": "checkout_complete"})
     g.add_conditional_edges("retrieve", route_after_retrieve,
                             {"ask": "ask", "compare": "compare", "detail": "detail", "price_answer": "price_answer",
-                             "fulfillment_prompt": "fulfillment_prompt", "catalog_unavailable": "catalog_unavailable"})
+                             "fulfillment_prompt": "fulfillment_prompt", "checkout_prompt": "checkout_prompt",
+                             "catalog_unavailable": "catalog_unavailable"})
     g.add_conditional_edges("product_lookup", route_after_product_lookup,
                             {"compare": "compare", "enrich": "enrich"})
     g.add_edge("ask", END)
@@ -1018,7 +1120,9 @@ def build_graph(*, checkpointer):
     g.add_conditional_edges(
         "fulfillment_check",
         route_after_fulfillment_check,
-        {"compare": "compare", "end": END},
+        {"compare": "compare", "checkout_prompt": "checkout_prompt", "end": END},
     )
     g.add_edge("fulfillment_clarify", END)
+    g.add_edge("checkout_prompt", END)
+    g.add_edge("checkout_complete", END)
     return g.compile(checkpointer=checkpointer)
