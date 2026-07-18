@@ -12,10 +12,20 @@ from .elasticsearch import (
     elasticsearch,
     get_elasticsearch,
 )
+from .qdrant import (
+    QdrantClient,
+    QdrantRequestError,
+    get_qdrant,
+    qdrant,
+)
 
 __all__ = [
     "ElasticsearchClient",
     "ElasticsearchRequestError",
     "elasticsearch",
     "get_elasticsearch",
+    "QdrantClient",
+    "QdrantRequestError",
+    "qdrant",
+    "get_qdrant",
 ]

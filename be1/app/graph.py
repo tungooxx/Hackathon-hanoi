@@ -11,8 +11,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
-from . import be2_client, llm, ontology_stub
-from .config import COMPARE_THRESHOLD, MAX_ASK_TURNS
+from . import llm, ontology_stub, product_repo, rag
+from .config import COMPARE_THRESHOLD, MAX_ASK_TURNS, RAG_MIN_SCORE, RAG_TOP_K
 from .filtering import apply_hard_filters
 from .scoring import rank_top3
 
@@ -64,7 +64,7 @@ async def intent_node(state: AgentState) -> dict:
 async def retrieve_node(state: AgentState) -> dict:
     w = get_stream_writer()
     t0 = time.perf_counter()
-    products = await be2_client.get_products(state["category"])
+    products = await product_repo.get_products(state["category"])
     candidates = apply_hard_filters(products, state["slots"])
     w({"type": "_stage", "stage": "retrieve", "ms": round((time.perf_counter() - t0) * 1000)})
     w({"type": "funnel_count", "count": len(candidates), "total": len(products),
@@ -73,6 +73,8 @@ async def retrieve_node(state: AgentState) -> dict:
 
 
 def route_after_intent(state: AgentState) -> str:
+    if state["intent_type"] == "policy":
+        return "policy"
     if state["intent_type"] == "off_topic":
         return "off_topic"
     if not state.get("category"):
@@ -133,6 +135,32 @@ async def compare_node(state: AgentState) -> dict:
     return {}
 
 
+async def policy_node(state: AgentState) -> dict:
+    """RAG: tìm chunk chính sách liên quan -> trả lời grounded. Điểm thấp -> thú nhận không có."""
+    w = get_stream_writer()
+    t0 = time.perf_counter()
+    hits = await rag.search(state["user_input"], RAG_TOP_K)
+    w({"type": "_stage", "stage": "policy_retrieve", "ms": round((time.perf_counter() - t0) * 1000)})
+
+    if not hits or hits[0].score < RAG_MIN_SCORE:
+        w({"type": "_policy_miss", "top_score": hits[0].score if hits else 0.0})
+        async for chunk in llm.stream_phrase("policy_no_info", {}):
+            w({"type": "text_chunk", "content": chunk})
+        w({"type": "done", "turn_type": "policy"})
+        return {}
+
+    hit_dicts = [{"title": h.title, "source": h.source, "text": h.text, "score": h.score} for h in hits]
+    w({"type": "policy_sources",
+       "sources": [{"title": h.title, "source": h.source, "score": h.score} for h in hits]})
+    w({"type": "_context", "policy_hits": hit_dicts, "query": state["user_input"]})
+    t1 = time.perf_counter()
+    async for chunk in llm.stream_phrase("policy", {"question": state["user_input"], "hits": hit_dicts}):
+        w({"type": "text_chunk", "content": chunk})
+    w({"type": "_stage", "stage": "policy_phrase", "ms": round((time.perf_counter() - t1) * 1000)})
+    w({"type": "done", "turn_type": "policy"})
+    return {}
+
+
 async def off_topic_node(state: AgentState) -> dict:
     w = get_stream_writer()
     async for chunk in llm.stream_phrase("off_topic", {}):
@@ -147,14 +175,16 @@ def build_graph():
     g.add_node("retrieve", retrieve_node)
     g.add_node("ask", ask_node)
     g.add_node("compare", compare_node)
+    g.add_node("policy", policy_node)
     g.add_node("off_topic", off_topic_node)
     g.add_edge(START, "intent")
     g.add_conditional_edges("intent", route_after_intent,
-                            {"retrieve": "retrieve", "off_topic": "off_topic"})
+                            {"retrieve": "retrieve", "policy": "policy", "off_topic": "off_topic"})
     g.add_conditional_edges("retrieve", route_after_retrieve,
                             {"ask": "ask", "compare": "compare"})
     g.add_edge("ask", END)
     g.add_edge("compare", END)
+    g.add_edge("policy", END)
     g.add_edge("off_topic", END)
     return g.compile(checkpointer=MemorySaver())
 

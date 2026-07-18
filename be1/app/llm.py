@@ -18,7 +18,9 @@ Ngữ cảnh hội thoại: category hiện tại = {category}, thông tin đã 
 Quy tắc:
 - intent_type: "new_topic" nếu khách chuyển sang loại sản phẩm khác; "same_topic" nếu bổ sung \
 thông tin; "off_topic" nếu không liên quan mua sắm điện máy; "force_answer" nếu khách muốn \
-được gợi ý/chốt ngay ("tư vấn luôn đi", "cứ gợi ý đi", "sao cũng được").
+được gợi ý/chốt ngay ("tư vấn luôn đi", "cứ gợi ý đi", "sao cũng được"); "policy" nếu khách \
+hỏi về CHÍNH SÁCH/QUY ĐỊNH cửa hàng (bảo hành, đổi trả, hoàn tiền/trả hàng, giao hàng, lắp đặt, \
+khui hộp, điều khoản sử dụng, xử lý dữ liệu cá nhân/bảo mật, nội quy) — kể cả khi có nhắc tên sản phẩm.
 - budget_max đổi về VND: "10tr"/"10 triệu" -> 10000000. "tầm"/"khoảng" vẫn tính là budget_max.
 - product_mentions: chép NGUYÊN VĂN tên/mã sản phẩm khách gõ, không sửa chính tả.
 - priorities theo thứ tự khách nhắc: tiết kiệm điện->tiet_kiem_dien, êm/ít ồn->it_on, rẻ->gia_re.
@@ -26,6 +28,8 @@ thông tin; "off_topic" nếu không liên quan mua sắm điện máy; "force_a
 Ví dụ:
 "mya lanh cho fong 15m2 tam 8tr" -> category=may_lanh, area_m2=15, budget_max=8000000, intent_type=new_topic
 "thoi co gi tu van luon di" -> intent_type=force_answer
+"may lanh nay bao hanh bao lau" -> intent_type=policy
+"chinh sach doi tra the nao" -> intent_type=policy
 "hom nay da nang mua khong" -> intent_type=off_topic"""
 
 SALER_SYSTEM = """Bạn là nhân viên tư vấn Điện Máy Xanh — thân thiện, gọi khách là "anh/chị", xưng "em".
@@ -38,6 +42,17 @@ Quy tắc SẮT (vi phạm = sa thải):
   thành 2-4 tin nhắn ngắn (mỗi tin 1-2 câu, súc tích, giọng tự nhiên như người thật đang gõ), \
 mỗi tin cách nhau ĐÚNG MỘT dòng trống.
 - Tổng cộng tối đa ~120 từ."""
+
+POLICY_SYSTEM = """Bạn là nhân viên CSKH Điện Máy Xanh — thân thiện, gọi khách "anh/chị", xưng "em".
+Trả lời câu hỏi của khách về CHÍNH SÁCH cửa hàng.
+Quy tắc SẮT (vi phạm = sa thải):
+- CHỈ dùng thông tin trong phần TRÍCH CHÍNH SÁCH được cung cấp. TUYỆT ĐỐI không bịa, không dùng \
+kiến thức ngoài, không suy diễn ngoài trích dẫn.
+- Nếu trích dẫn KHÔNG chứa câu trả lời -> nói thẳng "phần này bên em chưa có thông tin trong chính \
+sách ạ, anh/chị vui lòng liên hệ tổng đài 1800.1060 để được hỗ trợ chính xác nhé", KHÔNG đoán.
+- Nêu ĐÚNG con số/điều kiện (số ngày, %, phí, mốc thời gian...) y như trong trích dẫn.
+- Nhắc tên chính sách nguồn một cách tự nhiên khi trả lời.
+- Trả lời như đang NHẮN TIN: chia 2-4 tin ngắn, mỗi tin cách nhau ĐÚNG MỘT dòng trống, tổng ~120 từ."""
 
 
 def _get_llm(model: str, temperature: float):
@@ -57,6 +72,13 @@ _CATEGORY_KW = {
     "may_giat": ["máy giặt", "may giat"],
 }
 
+_POLICY_KW = [
+    "bảo hành", "bao hanh", "đổi trả", "doi tra", "hoàn tiền", "hoan tien", "trả hàng", "tra hang",
+    "giao hàng", "giao hang", "lắp đặt", "lap dat", "khui hộp", "khui hop", "điều khoản", "dieu khoan",
+    "dữ liệu cá nhân", "du lieu ca nhan", "bảo mật", "bao mat", "nội quy", "noi quy",
+    "chính sách", "chinh sach", "quy định", "quy dinh",
+]
+
 
 def _mock_intent(text: str, category: str | None) -> IntentResult:
     low = text.lower()
@@ -74,8 +96,12 @@ def _mock_intent(text: str, category: str | None) -> IntentResult:
     if re.search(r"\brẻ|\bre\b|giá tốt", low):
         prios.append("gia_re")
     force = bool(re.search(r"luôn đi|luon di|chốt|gợi ý (luôn|ngay)|sao cũng được|tu van luon", low))
+    is_policy = any(k in low for k in _POLICY_KW)
     if force:
         itype = "force_answer"
+    elif is_policy and not slots:
+        # hỏi chính sách (không kèm ngân sách/diện tích = không phải đang lọc sản phẩm)
+        return IntentResult(intent_type="policy", category=None, priorities=[])
     elif cat and cat != category:
         itype = "new_topic"
     elif cat or slots or prios:
@@ -130,26 +156,51 @@ def _mock_phrase(kind: str, context: dict) -> str:
     if kind == "no_match":
         return ("Dạ với điều kiện hiện tại em chưa tìm được mẫu nào khớp hoàn toàn.\n\n"
                 "Anh/chị có thể nới ngân sách hoặc diện tích một chút để em tìm lại giúp mình nhé ạ.")
+    if kind == "policy":
+        top = context["hits"][0]
+        snippet = top["text"].split("\n", 1)[-1].strip()[:400]  # bỏ dòng header [title]
+        return (f"Dạ theo {top['title']} của bên em:\n\n"
+                f"{snippet}\n\n"
+                f"Anh/chị cần em nói rõ thêm phần nào không ạ?")
+    if kind == "policy_no_info":
+        return ("Dạ phần này em chưa tìm thấy trong chính sách hiện có của bên em ạ.\n\n"
+                "Anh/chị vui lòng liên hệ tổng đài 1800.1060 để được hỗ trợ chính xác nhất nhé ạ.")
     return "Dạ em là trợ lý tư vấn điện máy của Điện Máy Xanh, mình cần tư vấn sản phẩm nào em hỗ trợ liền ạ!"
 
 
 async def stream_phrase(kind: str, context: dict) -> AsyncIterator[str]:
-    """kind: ask | compare | no_match | off_topic. context: JSON đưa vào prompt."""
-    if MOCK_LLM or kind == "off_topic":
+    """kind: ask | compare | no_match | off_topic | policy | policy_no_info."""
+    if MOCK_LLM or kind in ("off_topic", "policy_no_info"):
         async for chunk in _mock_stream(_mock_phrase(kind, context)):
             yield chunk
         return
-    user_msg = {
-        "ask": "Hãy hỏi khách MỘT câu để lấy thông tin '{question_slot}'. Gợi ý cách hỏi: {ask_hint}. "
-               "Số sản phẩm đang khớp: {candidate_count}. Thông tin đã có: {slots}",
-        "compare": "So sánh và tư vấn top 3 sau cho khách (ưu tiên của khách: {priorities}). "
-                   "Nêu trade-off giữa 3 mẫu. DATA (nguồn duy nhất được phép dùng): {products}",
-        "no_match": "Không có sản phẩm khớp bộ lọc {slots}. Xin lỗi khách và đề xuất nới tiêu chí nào hợp lý. "
-                    "TUYỆT ĐỐI không nêu bất kỳ con số/thông số sản phẩm nào (turn này không có dữ liệu sản phẩm).",
-    }[kind].format(**{k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v
-                      for k, v in context.items()})
-    llm = _get_llm(LLM_MODEL_LARGE, 0.3)
-    async for chunk in llm.astream([("system", SALER_SYSTEM), ("user", user_msg)],
-                                   config=lf_config(f"phrase_{kind}")):
-        if chunk.content:
-            yield chunk.content
+    if kind == "policy":
+        system = POLICY_SYSTEM
+        chunks_str = "\n\n---\n\n".join(h["text"] for h in context["hits"])
+        user_msg = (f"Câu hỏi của khách: {context['question']}\n\n"
+                    f"TRÍCH CHÍNH SÁCH (nguồn DUY NHẤT được phép dùng):\n{chunks_str}")
+    else:
+        system = SALER_SYSTEM
+        user_msg = {
+            "ask": "Hãy hỏi khách MỘT câu để lấy thông tin '{question_slot}'. Gợi ý cách hỏi: {ask_hint}. "
+                   "Số sản phẩm đang khớp: {candidate_count}. Thông tin đã có: {slots}",
+            "compare": "So sánh và tư vấn top 3 sau cho khách (ưu tiên của khách: {priorities}). "
+                       "Nêu trade-off giữa 3 mẫu. DATA (nguồn duy nhất được phép dùng): {products}",
+            "no_match": "Không có sản phẩm khớp bộ lọc {slots}. Xin lỗi khách và đề xuất nới tiêu chí nào hợp lý. "
+                        "TUYỆT ĐỐI không nêu bất kỳ con số/thông số sản phẩm nào (turn này không có dữ liệu sản phẩm).",
+        }[kind].format(**{k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v
+                          for k, v in context.items()})
+    llm = _get_llm(LLM_MODEL_LARGE, 0.2 if kind == "policy" else 0.3)
+    msgs = [("system", system), ("user", user_msg)]
+    cfg = lf_config(f"phrase_{kind}")
+    for attempt in range(3):  # FPT thỉnh thoảng 404/timeout lúc mở stream -> retry khi CHƯA yield
+        started = False
+        try:
+            async for chunk in llm.astream(msgs, config=cfg):
+                if chunk.content:
+                    started = True
+                    yield chunk.content
+            return
+        except Exception:
+            if started or attempt == 2:  # đã stream dở -> không retry (tránh lặp text)
+                raise
