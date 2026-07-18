@@ -4,7 +4,10 @@
 #   /app/be1/app/...        (code)
 #   /app/be1/data/...       (be1-local data)
 #   /app/data/ontology_data.json  (repo-root data, read via parents[2])
-FROM python:3.14-slim
+# Pinned to 3.14.3: the graph's category-resolution flow diverges on 3.14.6
+# (topic-change compression silently stops working). Keep in sync with
+# be1/.python-version and the CI workflow.
+FROM python:3.14.3-slim
 
 # uv (fast, reproducible installs from uv.lock)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
