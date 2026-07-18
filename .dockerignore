@@ -1,0 +1,18 @@
+# Root build context (used by the backend image). Keep be1/ and data/.
+.git/
+.claude/
+.vite/
+fe/
+**/node_modules/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+be1/logs/
+*.log
+.env
+**/.env
+be1/.env
+deploy/.env.prod
+**/.DS_Store
+be1/data/*.lock

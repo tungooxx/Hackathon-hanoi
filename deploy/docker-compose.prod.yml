@@ -57,8 +57,8 @@ services:
 
   backend:
     build:
-      context: ../be1
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: be1/Dockerfile
     restart: unless-stopped
     env_file:
       - ../be1/.env
