@@ -8,10 +8,12 @@
 #   be1/.env            backend runtime config (keys, service URLs, JWT secrets)
 #   deploy/.env.prod    compose interpolation (POSTGRES_PASSWORD, ports, limits)
 #
-# Usage:  deploy/deploy.sh [branch]   (default: main)
+# Usage:  deploy/deploy.sh [branch]          (default: main; no seed)
+#         SEED=1 deploy/deploy.sh [branch]   (re-index ES + Qdrant)
 set -euo pipefail
 
 BRANCH="${1:-main}"
+SEED="${SEED:-0}"   # 0: bỏ qua seed (mặc định); 1: re-index ES + Qdrant
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${REPO_DIR}/deploy/docker-compose.prod.yml"
 ENV_FILE="${REPO_DIR}/deploy/.env.prod"
@@ -48,14 +50,18 @@ for _ in $(seq 1 40); do
   sleep 3
 done
 
-echo "==> Seeding Elasticsearch product index"
-compose exec -T backend python data_ingest/ingest_products.py \
-  --elasticsearch-url "http://elasticsearch:9200" --recreate-index || \
-  echo "WARN: product ingest failed (continuing)"
+if [ "${SEED}" = "1" ]; then
+  echo "==> Seeding Elasticsearch product index"
+  compose exec -T backend python data_ingest/ingest_products.py \
+    --elasticsearch-url "http://elasticsearch:9200" --recreate-index || \
+    echo "WARN: product ingest failed (continuing)"
 
-echo "==> Building policy RAG index (Qdrant)"
-compose exec -T backend python scripts/build_policy_index.py || \
-  echo "WARN: policy index build skipped/failed (RAG falls back to lexical)"
+  echo "==> Building policy RAG index (Qdrant)"
+  compose exec -T backend python scripts/build_policy_index.py || \
+    echo "WARN: policy index build skipped/failed (RAG falls back to lexical)"
+else
+  echo "==> Skipping seed (set SEED=1 to re-index ES/Qdrant)"
+fi
 
 echo "==> Pruning dangling images"
 docker image prune -f >/dev/null 2>&1 || true
