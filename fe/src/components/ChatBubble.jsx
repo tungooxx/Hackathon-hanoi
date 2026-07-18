@@ -35,6 +35,7 @@ export default function ChatBubble() {
   const [panelSize, setPanelSize] = useState({ width: 340, height: 460 })
   const [resizing, setResizing] = useState(false)
   const bodyRef = useRef(null)
+  const inputRef = useRef(null)
   // The public chat-session ID is created by BE1. The private LangGraph thread
   // ID never reaches the browser.
   const chatSessionId = useRef(null)
@@ -174,6 +175,8 @@ export default function ChatBubble() {
     ])
     setInput('')
     setTyping(true)
+    // giữ con trỏ trong ô nhập để người dùng gõ tiếp ngay cả khi bot đang trả lời
+    inputRef.current?.focus()
 
     try {
       // Authenticated users receive a durable, owner-checked conversation.
@@ -360,10 +363,10 @@ export default function ChatBubble() {
 
           <div className="chat-panel__input">
             <input
+              ref={inputRef}
               type="text"
               placeholder="Nhập câu hỏi của bạn..."
               value={input}
-              disabled={typing}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
             />

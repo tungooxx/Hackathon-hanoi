@@ -15,13 +15,16 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 # model nhỏ-nhanh cho NLU, model lớn cho phrasing saler
 LLM_MODEL_SMALL = os.getenv("LLM_MODEL_SMALL", "llama-3.3-70b-versatile")
 LLM_MODEL_LARGE = os.getenv("LLM_MODEL_LARGE", "llama-3.3-70b-versatile")
+# Cắt cứng độ trễ mỗi lần gọi model (giây). Với stream: là read-timeout giữa các
+# chunk — model treo quá ngần này không nhả token mới -> huỷ, không để khách chờ.
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "5"))
 
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://127.0.0.1:9200")
 # ELASTICSEARCH_URL = "https://disprove-empower-stony.ngrok-free.dev"
 ELASTICSEARCH_INDEX = os.getenv("ELASTICSEARCH_PRODUCTS_INDEX", "products")
 ELASTICSEARCH_USERNAME = os.getenv("ELASTICSEARCH_USERNAME", "")
 ELASTICSEARCH_PASSWORD = os.getenv("ELASTICSEARCH_PASSWORD", "")
-ELASTICSEARCH_TIMEOUT_SECONDS = float(os.getenv("ELASTICSEARCH_TIMEOUT_SECONDS", "10"))
+ELASTICSEARCH_TIMEOUT_SECONDS = float(os.getenv("ELASTICSEARCH_TIMEOUT_SECONDS", "2"))
 
 # PostgreSQL stores users, failed-login throttling data, and revocable sessions.
 # Override this in every deployed environment; the default only matches local dev.
@@ -142,7 +145,7 @@ RAG_MIN_SCORE = float(os.getenv("RAG_MIN_SCORE", "0.3"))
 QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
 QDRANT_COLLECTION = os.getenv("QDRANT_POLICY_COLLECTION", "policies")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "")
-QDRANT_TIMEOUT_SECONDS = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "10"))
+QDRANT_TIMEOUT_SECONDS = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "2"))
 
 POLICY_DIR = ROOT / "policy-files"
 # marker lưu hash (file + model) của lần build gần nhất -> biết khi nào cần build lại Qdrant

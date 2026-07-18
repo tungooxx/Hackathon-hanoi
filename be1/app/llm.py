@@ -16,6 +16,7 @@ from .config import (
     LLM_BASE_URL,
     LLM_MODEL_LARGE,
     LLM_MODEL_SMALL,
+    LLM_TIMEOUT_SECONDS,
     MAX_ENRICH_ITERS,
     MOCK_LLM,
 )
@@ -104,7 +105,8 @@ def _get_llm(model: str, temperature: float):
 
     return ChatOpenAI(
         model=model, base_url=LLM_BASE_URL, api_key=LLM_API_KEY,
-        temperature=temperature, timeout=30,
+        temperature=temperature, timeout=LLM_TIMEOUT_SECONDS,
+        max_retries=0,
     )
 
 
