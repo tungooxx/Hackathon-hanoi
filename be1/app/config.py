@@ -15,8 +15,7 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL_SMALL = os.getenv("LLM_MODEL_SMALL", "llama-3.3-70b-versatile")
 LLM_MODEL_LARGE = os.getenv("LLM_MODEL_LARGE", "llama-3.3-70b-versatile")
 
-# ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://127.0.0.1:9200")
-ELASTICSEARCH_URL = "https://disprove-empower-stony.ngrok-free.dev"
+ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://127.0.0.1:9200")
 ELASTICSEARCH_INDEX = os.getenv("ELASTICSEARCH_PRODUCTS_INDEX", "products")
 ELASTICSEARCH_USERNAME = os.getenv("ELASTICSEARCH_USERNAME", "")
 ELASTICSEARCH_PASSWORD = os.getenv("ELASTICSEARCH_PASSWORD", "")
@@ -50,6 +49,7 @@ JUDGMENT_LOG = ROOT / "logs" / "judgments.jsonl"
 
 # judge = model NGOÀI hệ thống, mạnh hơn — rỗng thì fallback về LLM_* ở trên
 MOCK_JUDGE = os.getenv("MOCK_JUDGE", "0") == "1"
+ONTOLOGY_REVIEWER_TOKEN = os.getenv("ONTOLOGY_REVIEWER_TOKEN", "")
 JUDGE_BASE_URL = os.getenv("JUDGE_BASE_URL", "") or LLM_BASE_URL
 JUDGE_API_KEY = os.getenv("JUDGE_API_KEY", "") or LLM_API_KEY
 JUDGE_MODEL = os.getenv("JUDGE_MODEL", "") or LLM_MODEL_LARGE

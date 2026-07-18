@@ -72,6 +72,23 @@ suggest_next_question(category, filled_slots, asked_slots, candidates) -> NextQu
 
 `NextQuestion.reason` sẽ hiển thị lên explainability panel — viết cho người đọc.
 
+## Adaptive Decision Ontology Engine
+
+`POST /api/v1/ontology/adapt` builds an adaptive profile from `../data/ontology_data.json` without mutating the reviewed seed. It loads ten reviewed category seeds plus the shared `Tất cả` core.
+
+- Exact seed → `REVIEWED`; related category → guarded `COMPOSED_*`; distant category → `GENERATED_DISTANT` with all new category-specific items marked `PROVISIONAL`.
+- Modules activate only when their own schema/sample evidence exists. A display does not automatically activate battery or portability.
+- Generated profiles persist in `be1/data/generated_categories.json`; use `/review/{profile_id}/approve` or `/reject` for human review.
+- `POST /api/v1/ontology/questions/next` returns at most one eligible Vietnamese question.
+
+Example request:
+
+```json
+{"category_name":"Tivi","raw_fields":["Kích thước màn hình","Độ phân giải","Cổng HDMI","Công nghệ âm thanh"]}
+```
+
+Run tests with `pytest tests/test_adaptive_ontology.py`.
+
 ## Turn log (input cho judge/eval)
 
 Mỗi turn append vào `logs/turns.jsonl`: `query`, `response`, `context_json` (đúng data LLM nhìn thấy

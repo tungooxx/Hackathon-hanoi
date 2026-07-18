@@ -9,6 +9,7 @@ from sse_starlette.sse import EventSourceResponse
 from db import elasticsearch, qdrant
 
 from .graph import graph
+from .adaptive_api import router as adaptive_router
 from .schemas import ChatRequest
 from .tracing import set_session
 from .turnlog import log_turn
@@ -29,6 +30,7 @@ app = FastAPI(title="DMX Advisor BE1", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
+app.include_router(adaptive_router)
 
 
 @app.get("/health")

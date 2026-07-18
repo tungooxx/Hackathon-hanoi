@@ -6,16 +6,11 @@ mà filtering.py / scoring.py / phrasing LLM cần (sku, price_sale, area_*_m2, 
 energy_stars, inverter, brand, ...).
 """
 import re
+import unicodedata
+from difflib import SequenceMatcher
 from typing import Any
 
 from db.elasticsearch import elasticsearch
-
-# category nội bộ (NLU sinh ra) -> category_name trong ES
-CATEGORY_TO_ES = {
-    "may_lanh": "Máy lạnh",
-    "tu_lanh": "Tủ lạnh",
-    "may_giat": "Máy giặt",
-}
 
 # chỉ lấy field cần cho normalize -> bỏ search_text/promotion/... (payload nhẹ hơn nhiều)
 _SOURCE = [
@@ -24,6 +19,37 @@ _SOURCE = [
 ]
 
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _normal(value: str) -> str:
+    value = unicodedata.normalize("NFD", value.lower())
+    value = "".join(char for char in value if unicodedata.category(char) != "Mn")
+    return re.sub(r"[^a-z0-9]+", " ", value).strip()
+
+
+async def resolve_category(query_text: str) -> str | None:
+    """Discover a real category directly from Elasticsearch index values."""
+    response = await elasticsearch.search({
+        "size": 0,
+        "aggs": {"categories": {"terms": {"field": "category_name.raw", "size": 1000}}},
+    })
+    query = _normal(query_text)
+    categories = [bucket["key"] for bucket in response.get("aggregations", {}).get("categories", {}).get("buckets", [])]
+    matches = [category for category in categories if _normal(category) in query]
+    if matches:
+        return max(matches, key=lambda item: len(_normal(item)))
+    # Conservative typo recovery: require a close full-label match and an
+    # unambiguous winner so generic/off-topic text is never routed as catalog.
+    candidates = []
+    for category in categories:
+        label = _normal(category)
+        score = SequenceMatcher(None, query, label).ratio()
+        if len(query) >= 4 and score >= 0.84:
+            candidates.append((score, category))
+    candidates.sort(reverse=True)
+    if len(candidates) == 1 or candidates and candidates[0][0] - candidates[1][0] >= 0.08:
+        return candidates[0][1] if candidates else None
+    return None
 
 
 def _f(v: Any) -> float | None:
@@ -108,17 +134,15 @@ def _normalize(src: dict, category: str) -> dict:
         "warranty_parts": _spec_find(specs, "bảo hành cục", "bảo hành linh kiện", "bảo hành sản phẩm")
         or src.get("warranty_policy"),
         "utilities": _spec_find(specs, "tiện ích"),
+        "attributes": specs,
     }
 
 
 async def get_products(category: str) -> list[dict]:
-    es_name = CATEGORY_TO_ES.get(category)
-    if not es_name:
-        return []  # category chưa hỗ trợ -> rỗng, route sẽ báo no_match
     body = {
         "size": 500,
         "_source": _SOURCE,
-        "query": {"term": {"category_name.raw": es_name}},
+        "query": {"term": {"category_name.raw": category}},
     }
     resp = await elasticsearch.search(body)
     hits = resp.get("hits", {}).get("hits", [])

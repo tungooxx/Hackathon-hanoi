@@ -1,0 +1,55 @@
+[
+  {
+    "sku": "FUJI-SI718AB", "name": "Bàn ủi hơi nước cầm tay FUJIHOME SI718AB 1200W",
+    "category": "ban_ui", "loai_ban_ui": "Bàn ủi hơi nước cầm tay", "cong_suat_w": 1200,
+    "binh_nuoc_ml": 110, "mat_de": "Ceramic chống dính", "day_dien_cm": 180,
+    "khoi_luong_kg": 0.92, "tien_ich": ["Tay cầm xoay 90 độ", "Ủi quần áo treo"],
+    "an_toan": "Tự ngắt khi quá nhiệt"
+  },
+  {
+    "sku": "PHILIPS-STE1010", "name": "Bàn ủi hơi nước đứng Philips STE1010/70 1600W",
+    "category": "ban_ui", "loai_ban_ui": "Bàn ủi hơi nước đứng", "cong_suat_w": 1600,
+    "binh_nuoc_ml": 1800, "mat_de": "Nhựa", "day_dien_cm": 150,
+    "khoi_luong_kg": 2.653, "tien_ich": ["Ủi quần áo treo", "Điều chỉnh chiều cao", "Nút xả cặn"]
+  },
+  {
+    "sku": "PHILIPS-STH3020", "name": "Bàn ủi hơi nước cầm tay Philips STH3020/10 1090W",
+    "category": "ban_ui", "loai_ban_ui": "Bàn ủi hơi nước cầm tay", "cong_suat_w": 1090,
+    "binh_nuoc_ml": 120, "mat_de": "Kim loại", "day_dien_cm": 193,
+    "khoi_luong_kg": 1.0, "tien_ich": ["Tay cầm gấp gọn", "Nhỏ gọn, dễ mang đi du lịch", "Diệt khuẩn và khử mùi"]
+  },
+  {
+    "sku": "SUNHOUSE-SHD2174", "name": "Bàn ủi hơi nước cầm tay Sunhouse SHD2174 1000W",
+    "category": "ban_ui", "loai_ban_ui": "Bàn ủi hơi nước cầm tay", "cong_suat_w": 1000,
+    "binh_nuoc_ml": 150, "mat_de": "Nhôm phủ Ceramic chống dính", "day_dien_cm": 140,
+    "khoi_luong_kg": 0.85, "tien_ich": ["Tay cầm xoay 180 độ", "Chọn nhiều chế độ vải"],
+    "an_toan": "Tự ngắt khi quá nhiệt"
+  },
+  {
+    "sku": "MIDEA-MGS21100", "name": "Bàn ủi hơi nước cầm tay Midea MGS21100BPBE 2100W",
+    "category": "ban_ui", "loai_ban_ui": "Bàn ủi hơi nước cầm tay", "cong_suat_w": 2100,
+    "binh_nuoc_ml": 210, "mat_de": "Ceramic chống dính", "day_dien_cm": 180,
+    "khoi_luong_kg": 0.85, "tien_ich": ["Ủi treo", "Ủi nằm", "Chống nhỏ giọt", "Dây nguồn xoay 180 độ"],
+    "an_toan": "Tự ngắt khi quá nhiệt"
+  },
+  {
+    "sku": "SUNHOUSE-SHD2063P", "name": "Bàn ủi hơi nước Sunhouse SHD2063P 1600W",
+    "category": "ban_ui", "loai_ban_ui": "Bàn ủi hơi nước", "cong_suat_w": 1600,
+    "binh_nuoc_ml": 130, "mat_de": "Ceramic chống dính", "day_dien_cm": 157,
+    "khoi_luong_kg": 0.7, "tien_ich": ["Phun tia", "Phun hơi thẳng đứng", "Dây nguồn xoay 360 độ"],
+    "an_toan": "Tự động ngắt điện"
+  },
+  {
+    "sku": "PHILIPS-DST7510", "name": "Bàn ủi hơi nước Philips DST7510/80 3200W",
+    "category": "ban_ui", "loai_ban_ui": "Bàn ủi hơi nước", "cong_suat_w": 3200,
+    "binh_nuoc_ml": 300, "mat_de": "SteamGlide chống dính", "day_dien_cm": 197,
+    "khoi_luong_kg": 1.6, "tien_ich": ["Tiết kiệm điện", "Chống nhỏ giọt", "Rãnh cúc", "Xả cặn"],
+    "an_toan": "Tự ngắt khi quá nhiệt"
+  },
+  {
+    "sku": "BLUESTONE-DIB3726", "name": "Bàn ủi khô BlueStone DIB-3726 1300W",
+    "category": "ban_ui", "loai_ban_ui": "Bàn ủi khô", "cong_suat_w": 1300,
+    "binh_nuoc_ml": null, "mat_de": "Hợp kim nhôm", "day_dien_cm": 190,
+    "khoi_luong_kg": 0.7, "tien_ich": ["Rãnh cúc", "Dây nguồn xoay 360 độ"]
+  }
+]
