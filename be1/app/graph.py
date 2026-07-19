@@ -1082,8 +1082,8 @@ async def checkout_complete_node(state: AgentState) -> dict:
     product = _checkout_product(state)
     name = product.get("name") if product else "mẫu anh/chị đã chọn"
     message = (
-        f"Dạ em đã ghi nhận yêu cầu đặt {name} và số điện thoại liên hệ của anh/chị. "
-        "Bên em sẽ dùng thông tin này để xác nhận đơn sớm ạ."
+        f"Dạ em đã ghi nhận yêu cầu đặt {name}. "
+        "Cảm ơn anh/chị đã chọn Điện Máy Xanh — bên em sẽ liên hệ xác nhận đơn sớm ạ."
     )
     w({"type": "text_chunk", "content": message})
     w({"type": "done", "turn_type": "checkout_complete"})
