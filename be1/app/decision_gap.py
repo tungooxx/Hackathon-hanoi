@@ -115,7 +115,6 @@ def choose_next_question(
         if not answers:
             continue
         changes: list[float] = []
-        has_empty_outcome = False
         for answer in answers:
             # Live price answers are executed through LLM-owned budget slots,
             # not by parsing a raw answer in the runtime question slot. Use
@@ -132,17 +131,8 @@ def choose_next_question(
             simulated_products = ontology.apply_ontology_filters(
                 category, simulated_products, simulated_slots, effective_schema
             )
-            # A clarification must refine a viable shortlist, not earn high
-            # utility merely because one likely answer eliminates every
-            # product. Empty-result recovery belongs to an explicit customer
-            # constraint, never to Decision-Gap question selection.
-            if not simulated_products:
-                has_empty_outcome = True
-                break
             simulated_priorities = ontology.derive_priorities(category, simulated_slots, priorities)
             changes.append(_top3_change(baseline, _signature(simulated_products, simulated_priorities, catalog_preferences)))
-        if has_empty_outcome:
-            continue
         expected_change = sum(changes) / len(changes)
         utility = expected_change / max(0.1, float(definition.customer_effort))
         # A question earns its place only by changing the current shortlist.
