@@ -86,7 +86,8 @@ export default function ProductResults() {
   }
 
   return (
-    <main className="catalog">
+    <div className="stage stage--catalog">
+      <main className="catalog">
       <div className="catalog__bar">
         <button className="catalog__back" onClick={() => navigate('/')}>
           ← Về trang chủ
@@ -150,8 +151,9 @@ export default function ProductResults() {
             </div>
           )}
         </>
-      )}
-    </main>
+        )}
+      </main>
+    </div>
   )
 }
 

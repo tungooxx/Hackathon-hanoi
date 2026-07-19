@@ -246,6 +246,105 @@ class ChatSessionApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(forged.status_code, 422)
 
+    async def test_guest_session_is_stateful_and_carries_thread_and_history(
+        self,
+    ) -> None:
+        # A guest session exists so a short follow-up ("có", "ừ") reaches the
+        # graph with the previous turn's thread and history, instead of the
+        # stateless endpoint that would strand it as an off-topic message.
+        async with self.session.begin():
+            before = await self.session.scalar(
+                select(func.count(ChatSession.id))
+            )
+
+        created = await self.anonymous.post(
+            "/chat/guest/sessions",
+            json={},
+        )
+        self.assertEqual(created.status_code, 201)
+        body = created.json()
+        session_id = body["id"]
+        self.assertNotIn("user_id", body)
+        self.assertNotIn("langgraph_thread_id", body)
+
+        markdown = "# Session context\n\n- Khách muốn mua tivi."
+        self.runtime.next_session_content = markdown
+
+        first = await self.anonymous.post(
+            f"/chat/guest/sessions/{session_id}/messages",
+            json={"message": "tôi muốn mua tv"},
+        )
+        second = await self.anonymous.post(
+            f"/chat/guest/sessions/{session_id}/messages",
+            json={"message": "có chứ"},
+        )
+        self.assertEqual(first.status_code, 200)
+        self.assertIn('"type": "done"', first.text)
+        self.assertEqual(second.status_code, 200)
+
+        # Both turns are stateful (runtime.stream), never the stateless guest
+        # path, and share the one private thread the session owns.
+        self.assertEqual(self.runtime.guest_stream_calls, [])
+        self.assertEqual(len(self.runtime.stream_calls), 2)
+        first_thread, first_message, first_content = self.runtime.stream_calls[0]
+        second_thread, second_message, second_content = self.runtime.stream_calls[1]
+        self.assertEqual(first_thread, second_thread)
+        self.assertNotEqual(first_thread, session_id)
+        uuid.UUID(first_thread)
+        self.assertEqual(first_message, "tôi muốn mua tv")
+        self.assertEqual(second_message, "có chứ")
+        # History from turn 1 is fed into turn 2 so the model keeps the topic.
+        self.assertEqual(first_content, "")
+        self.assertEqual(second_content, markdown)
+
+        # Auto-title and persisted content survive without an account.
+        stored = await self.anonymous.post(
+            "/chat/guest/sessions",
+            json={},
+        )
+        self.assertEqual(stored.status_code, 201)
+
+        async with self.session.begin():
+            after = await self.session.scalar(
+                select(func.count(ChatSession.id))
+            )
+        # Exactly the two guest sessions created above — no per-turn rows.
+        self.assertEqual(after, before + 2)
+
+    async def test_guest_session_isolated_from_authenticated_sessions(
+        self,
+    ) -> None:
+        # A guest holds no identity, so ownership is enforced purely by the
+        # NULL user_id: neither side can drive the other's private thread.
+        await self._register(self.owner, self.owner_phone)
+        owned = await self.owner.post("/chat/sessions", json={})
+        owned_id = owned.json()["id"]
+
+        guest = await self.anonymous.post("/chat/guest/sessions", json={})
+        guest_id = guest.json()["id"]
+
+        # Guest route cannot reach an authenticated user's session.
+        stolen = await self.anonymous.post(
+            f"/chat/guest/sessions/{owned_id}/messages",
+            json={"message": "Dùng phiên người khác"},
+        )
+        self.assertEqual(stolen.status_code, 404)
+        self.assertEqual(
+            stolen.json()["error"]["code"],
+            "chat_session_not_found",
+        )
+
+        # Authenticated route cannot claim a guest session either.
+        claimed = await self.owner.post(
+            f"/chat/sessions/{guest_id}/messages",
+            json={"message": "Chiếm phiên khách"},
+        )
+        self.assertEqual(claimed.status_code, 404)
+
+        # Neither failed attempt reached the graph.
+        self.assertEqual(self.runtime.stream_calls, [])
+        self.assertEqual(self.runtime.guest_stream_calls, [])
+
     async def test_every_operation_enforces_cross_user_ownership(self) -> None:
         await self._register(self.owner, self.owner_phone)
         created = await self.owner.post("/chat/sessions", json={})

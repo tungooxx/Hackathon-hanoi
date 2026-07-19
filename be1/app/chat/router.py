@@ -41,6 +41,11 @@ GUEST_CHAT_ERROR_RESPONSES = {
     422: {"model": ApiErrorResponse, "description": "Invalid request"},
     503: {"model": ApiErrorResponse, "description": "Chat runtime unavailable"},
 }
+GUEST_SESSION_ERROR_RESPONSES = {
+    404: {"model": ApiErrorResponse, "description": "Chat session not found"},
+    422: {"model": ApiErrorResponse, "description": "Invalid request"},
+    503: {"model": ApiErrorResponse, "description": "Chat runtime unavailable"},
+}
 
 
 @guest_router.post(
@@ -68,6 +73,72 @@ async def stream_guest_chat_message(
         generate(),
         headers={"Cache-Control": "no-store"},
     )
+
+
+@guest_router.post(
+    "/sessions",
+    response_model=ChatSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses=GUEST_SESSION_ERROR_RESPONSES,
+)
+async def create_guest_chat_session(
+    payload: CreateChatSessionRequest,
+    service: ChatSessionServiceDependency,
+) -> ChatSessionResponse:
+    """Open an anonymous session (user_id NULL) and return its id to reuse."""
+
+    chat_session = await service.create(None, title=payload.title)
+    return _response(chat_session)
+
+
+@guest_router.post(
+    "/sessions/{chat_session_id}/messages",
+    responses=GUEST_SESSION_ERROR_RESPONSES,
+)
+async def stream_guest_session_message(
+    chat_session_id: uuid.UUID,
+    payload: ChatMessageRequest,
+    service: ChatSessionServiceDependency,
+    runtime: ChatGraphRuntimeDependency,
+) -> EventSourceResponse:
+    """Stream a stateful turn for a guest session keyed by its UUID."""
+
+    chat_session = await service.prepare_message(
+        chat_session_id,
+        None,
+        message=payload.message,
+    )
+    public_session_id = str(chat_session.id)
+    thread_id = str(chat_session.langgraph_thread_id)
+
+    async def generate():
+        set_session(public_session_id)
+        events: list[dict] = []
+        try:
+            async for event_payload in runtime.stream(
+                thread_id=thread_id,
+                message=payload.message,
+                session_content=chat_session.session_content,
+            ):
+                if event_payload["type"] == "_session_content_update":
+                    await service.update_session_content(
+                        chat_session_id,
+                        None,
+                        session_content=event_payload["content"],
+                    )
+                events.append(event_payload)
+                if not event_payload["type"].startswith("_"):
+                    yield _sse_event(event_payload)
+        except Exception:
+            logger.exception(
+                "Guest chat graph failed for session %s",
+                public_session_id,
+            )
+            yield _error_event()
+        finally:
+            log_turn(public_session_id, payload.message, events)
+
+    return EventSourceResponse(generate())
 
 
 @router.post(

@@ -14,6 +14,16 @@ export function createChatSession(title) {
   })
 }
 
+// Phiên khách (user_id NULL): vẫn có thread_id + session_content như user thật,
+// nên agent nắm được lịch sử hội thoại. Tái dùng id trả về cho mọi tin nhắn.
+export function createGuestChatSession(title) {
+  return apiRequest('/chat/guest/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(title ? { title } : {}),
+  })
+}
+
 export function listChatSessions({ limit = 50, offset = 0 } = {}) {
   const query = new URLSearchParams({
     limit: String(limit),
@@ -40,9 +50,12 @@ export function deleteChatSession(chatSessionId) {
   })
 }
 
-export function streamGuestChat({ message, signal, handlers }) {
+// Stateful guest turn: cùng runtime.stream() với user thật (thread_id +
+// session_content) nên giữ được ngữ cảnh giữa các lượt. Yêu cầu chatSessionId
+// tạo trước qua createGuestChatSession().
+export function streamGuestChat({ chatSessionId, message, signal, handlers }) {
   return streamMessage({
-    path: '/chat/guest/messages',
+    path: `/chat/guest/sessions/${encodeURIComponent(chatSessionId)}/messages`,
     message,
     signal,
     handlers,

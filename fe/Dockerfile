@@ -7,6 +7,10 @@ WORKDIR /app
 ARG VITE_API_BASE_URL=""
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
+# Bảng "Đang suy nghĩ..." (AgentActivity/tool-calling debug UI). False trên production.
+ARG VITE_DEBUG="False"
+ENV VITE_DEBUG=$VITE_DEBUG
+
 COPY package*.json ./
 RUN npm ci
 COPY . .

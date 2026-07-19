@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/useAuth'
 import {
   createChatSession,
+  createGuestChatSession,
   formatVnd,
   streamChat,
   streamGuestChat,
@@ -35,6 +36,7 @@ export default function ChatBubble() {
   const [panelSize, setPanelSize] = useState({ width: 340, height: 460 })
   const [resizing, setResizing] = useState(false)
   const bodyRef = useRef(null)
+  const inputRef = useRef(null)
   // The public chat-session ID is created by BE1. The private LangGraph thread
   // ID never reaches the browser.
   const chatSessionId = useRef(null)
@@ -138,6 +140,11 @@ export default function ChatBubble() {
     )
   }
 
+  // sản phẩm chỉ hiện SAU KHI bot trả lời xong tin nhắn đó (không lộ ra giữa
+  // lúc đang stream chữ), nên giữ tạm ở pendingProducts rồi mới "công bố"
+  const revealProducts = (botId) =>
+    patchBot(botId, (msg) => (msg.pendingProducts ? { products: msg.pendingProducts } : {}))
+
   // nối chunk text vào bong bóng cuối; gặp dòng trống ("\n\n") thì tách thành
   // bong bóng mới, mô phỏng người thật gửi nhiều tin nhắn ngắn liên tiếp
   const appendBotText = (botId, chunk) => {
@@ -169,20 +176,23 @@ export default function ChatBubble() {
     setMessages((m) => [
       ...m,
       { id: userMessageId, from: 'user', segments: [text] },
-      { id: botId, from: 'bot', segments: [''], funnel: null, products: null, reason: null,
-        actions: [], activityOpen: false },
+      { id: botId, from: 'bot', segments: [''], funnel: null, products: null, pendingProducts: null,
+        reason: null, actions: [], activityOpen: false },
     ])
     setInput('')
     setTyping(true)
+    // giữ con trỏ trong ô nhập để người dùng gõ tiếp ngay cả khi bot đang trả lời
+    inputRef.current?.focus()
 
     try {
-      // Authenticated users receive a durable, owner-checked conversation.
-      // Guests skip session creation and use the stateless endpoint below.
+      // Cả user thật lẫn khách đều mở một phiên có thread_id + session_content
+      // để agent giữ được ngữ cảnh hội thoại. Khác biệt duy nhất: user thật lưu
+      // theo tài khoản, khách chỉ giữ trong phiên hiện tại (id sống trong ref).
       if (!chatSessionId.current) {
-        if (user) {
-          const created = await createChatSession()
-          chatSessionId.current = created.id
-        }
+        const created = user
+          ? await createChatSession()
+          : await createGuestChatSession()
+        chatSessionId.current = created.id
       }
     } catch (error) {
       patchBot(botId, {
@@ -204,10 +214,11 @@ export default function ChatBubble() {
         onFunnel: (f) => patchBot(botId, { funnel: f }),
         onQuestion: (q) => patchBot(botId, { reason: q.reason }),
         onText: (chunk) => appendBotText(botId, chunk),
-        onProducts: (products) => patchBot(botId, { products }),
+        onProducts: (products) => patchBot(botId, { pendingProducts: products }),
         onAgentStep: (step) => pushStep(botId, step),
         onToolDone: ({ tool, count }) => finishTool(botId, tool, count),
         onDone: () => {
+          revealProducts(botId)
           sendingRef.current = false
           setTyping(false)
         },
@@ -220,6 +231,7 @@ export default function ChatBubble() {
                     'Dạ hệ thống đang bận, anh/chị thử lại sau giúp em nhé. 🙏',
                 ],
           }))
+          revealProducts(botId)
           sendingRef.current = false
           setTyping(false)
         },
@@ -231,7 +243,10 @@ export default function ChatBubble() {
         chatSessionId: chatSessionId.current,
       })
     } else {
-      streamGuestChat(request)
+      streamGuestChat({
+        ...request,
+        chatSessionId: chatSessionId.current,
+      })
     }
   }
 
@@ -284,7 +299,7 @@ export default function ChatBubble() {
               <strong>Trợ lý AI Điện máy XANH</strong>
               <span className="chat-panel__status">
                 <i className="dot" />{' '}
-                {user ? 'Lưu theo tài khoản' : 'Khách · Không lưu lịch sử'}
+                {user ? 'Lưu theo tài khoản' : 'Khách · Lịch sử tạm thời'}
               </span>
             </div>
             <button className="chat-panel__close" onClick={() => setOpen(false)}>
@@ -360,10 +375,10 @@ export default function ChatBubble() {
 
           <div className="chat-panel__input">
             <input
+              ref={inputRef}
               type="text"
               placeholder="Nhập câu hỏi của bạn..."
               value={input}
-              disabled={typing}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
             />
@@ -440,8 +455,13 @@ function ProductCard({ p }) {
     p.area_min_m2 != null && p.area_max_m2 != null
       ? `${p.area_min_m2}-${p.area_max_m2}m²`
       : null
+  // Có link trang SP thì card mở tab mới; không thì để div thường (giống catalog-card).
+  const Tag = p.url ? 'a' : 'div'
+  const linkProps = p.url
+    ? { href: p.url, target: '_blank', rel: 'noopener noreferrer' }
+    : {}
   return (
-    <div className="chat-card">
+    <Tag className="chat-card" {...linkProps}>
       {p.image_url && (
         <img className="chat-card__img" src={p.image_url} alt={p.name} loading="lazy" />
       )}
@@ -458,7 +478,7 @@ function ProductCard({ p }) {
         {area && <span>📐 {area}</span>}
         {p.inverter && <span>⚡ Inverter</span>}
       </div>
-    </div>
+    </Tag>
   )
 }
 
