@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -19,6 +20,14 @@ from app.config import (
 from app.graph import build_graph
 
 from .exceptions import ChatRuntimeUnavailable
+
+_PHONE_RE = re.compile(r"(?<!\d)(?:\+84|0)(?:[\s().-]*\d){9,10}(?!\d)")
+
+
+def _checkpoint_safe_message(message: str) -> tuple[str, bool]:
+    """Redact a submitted phone before it reaches checkpointed graph state."""
+    safe_message, replacements = _PHONE_RE.subn("[đã cung cấp số điện thoại]", message)
+    return safe_message, replacements > 0
 
 
 class ChatGraphRuntime:
@@ -93,9 +102,11 @@ class ChatGraphRuntime:
     ) -> AsyncIterator[dict[str, Any]]:
         graph = self._require_graph()
         config = {"configurable": {"thread_id": thread_id}}
+        safe_message, contact_submitted = _checkpoint_safe_message(message)
         async for payload in graph.astream(
             {
-                "user_input": message,
+                "user_input": safe_message,
+                "checkout_contact_submitted": contact_submitted,
                 "session_content": session_content,
             },
             config,
